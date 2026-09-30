@@ -1,1 +1,4 @@
-../se_NO.UTF-8/LC_MESSAGES
+^(([jJ]([oO])?)|([yY]([eE][sS])?)|([yY]))
+^(([iI]([iI])?)|([nN]([oO])?)|([nN]))
+jo:JO:yes:y:YES:Y
+ii:II:no:n:NO:N

@@ -1,1 +1,4 @@
-../sr_RS.UTF-8@latin/LC_MESSAGES
+^(([dD]([aA])?)|([dD])|([yY]([eE][sS])?)|([yY]))
+^(([nN]([eE])?)|([nN])|([nN]([oO])?)|([nN]))
+da:d:DA:D:yes:y:YES:Y
+ne:n:NE:N:no:n:NO:N

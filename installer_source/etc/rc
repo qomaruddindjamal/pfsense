@@ -150,4 +150,10 @@ fi
 
 echo ''
 date
+
+# Jalankan installer pfSense langsung di foreground console
+if [ -f /usr/local/libexec/installer/run-installer.sh ]; then
+	/bin/sh /usr/local/libexec/installer/run-installer.sh < /dev/console > /dev/console 2>&1
+fi
+
 exit 0

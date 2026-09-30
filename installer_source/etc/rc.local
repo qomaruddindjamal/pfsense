@@ -37,6 +37,10 @@ if ! mdconfig -l | grep -q md3; then
 	mount /dev/md3 /etc
 fi
 
+/usr/bin/cap_mkdb /etc/login.conf 2>/dev/null || true
+/sbin/ldconfig -m /lib /usr/lib /usr/local/lib 2>/dev/null || true
+chmod +x /usr/local/libexec/installer/* 2>/dev/null || true
+
 # resolv.conf from DHCP ends up in here, so make sure the directory exists
 [ ! -d "/tmp/bsdinstall_etc" ] && mkdir /tmp/bsdinstall_etc
 

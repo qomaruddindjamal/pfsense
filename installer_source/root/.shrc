@@ -53,8 +53,14 @@ PS1="\u@\h:\w \\$ "
 # search path for cd(1)
 # CDPATH=:$HOME
 
+/sbin/ldconfig -m /lib /usr/lib /usr/local/lib 2>/dev/null || true
+
 PFSENSE_INSTALLER="/usr/local/libexec/installer/pfSense-installer.sh"
 
 if [ -z "${NO_INSTALLER}" ] && [ -x "${PFSENSE_INSTALLER}" ]; then
 	"${PFSENSE_INSTALLER}"
+	echo ""
+	echo "Selamat datang di shell pfSense."
+	echo "Ketik 'pfSense-installer.sh' untuk menjalankan ulang installer."
+	echo ""
 fi

@@ -1,1 +1,4 @@
-../en_US.US-ASCII/LC_MESSAGES
+^(([yY]([eE][sS])?)|([yY]))
+^(([nN]([oO])?)|([nN]))
+yes:y:YES:Y
+no:n:NO:N

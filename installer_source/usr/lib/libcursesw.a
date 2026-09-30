@@ -1,1 +1,1 @@
-libncursesw.a
+INPUT(-lncursesw_real -ltinfow)

@@ -1,1 +1,1 @@
-libncursesw.so
+INPUT(/lib/libncursesw.so.9 AS_NEEDED(-ltinfow))

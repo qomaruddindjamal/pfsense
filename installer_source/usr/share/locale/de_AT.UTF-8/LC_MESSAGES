@@ -1,1 +1,4 @@
-../de_DE.UTF-8/LC_MESSAGES
+^(([jJ]([aA])?)|([jJ])|([yY]([eE][sS])?)|([yY]))
+^(([nN]([eE][iI][nN])?)|([nN])|([nN]([oO])?)|([nN]))
+ja:j:JA:J:yes:y:YES:Y
+nein:n:NEIN:N:no:n:NO:N

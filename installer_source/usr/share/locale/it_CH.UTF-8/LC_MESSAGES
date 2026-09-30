@@ -1,1 +1,4 @@
-../it_IT.UTF-8/LC_MESSAGES
+^(([sS]([ìÌ])?)|([sS])|([yY]([eE][sS])?)|([yY]))
+^(([nN]([oO])?)|([nN]))
+sì:s:SÌ:S:yes:y:YES:Y
+no:n:NO:N

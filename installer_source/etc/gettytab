@@ -213,8 +213,10 @@ al.115200:\
 	:al=root:tc=std.115200:
 al.230400:\
 	:al=root:tc=std.230400:
+Pc:\
+	:cb:ce:ck:lc:fd#1000:np:sp#0:
 al.Pc:\
-	:al=root:tc=Pc
+	:al=root:tc=Pc:
 
 #
 # Entries for 3-wire serial terminals.  These don't supply carrier, so
@@ -237,4 +239,4 @@ al.Pc:\
 
 # autologin for 3wire serial terminals.
 al.3wire:\
-	:al=root:tc=3wire
+	:al=root:tc=3wire:

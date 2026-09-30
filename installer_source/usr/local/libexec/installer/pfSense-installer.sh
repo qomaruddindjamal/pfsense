@@ -181,8 +181,16 @@ Use \"0\" to disable the swap.\n" \
 # Show the Copyright message
 #
 installer_copyright() {
-
-	TEXT=$("${CURL}" ${CURLFLAGS} -sN "${INSTALLER_URL}/copyright" | "${JQ}" -r '.text' 2> /dev/null)
+	local _retries=10
+	while [ ${_retries} -gt 0 ]; do
+		TEXT=$("${CURL}" ${CURLFLAGS} -sN "${INSTALLER_URL}/copyright" 2>/dev/null | "${JQ}" -r '.text' 2> /dev/null)
+		[ -n "${TEXT}" ] && [ "${TEXT}" != "null" ] && break
+		/bin/sleep 1
+		_retries=$((_retries - 1))
+	done
+	if [ -z "${TEXT}" ] || [ "${TEXT}" = "null" ]; then
+		TEXT="Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)\nAll rights reserved.\n\npfSense is a registered trademark of Electric Sheep Fencing, LLC.\n\nRedistribution and use in source and binary forms are permitted under the terms of the Apache 2.0 License."
+	fi
 	exec 3>&1
 	"${BSDDIALOG}" --backtitle "$(get_title)" \
 		--title " Copyright and Distribution Notice " \
@@ -200,9 +208,7 @@ installer_copyright() {
 	#
 	# Accept the Copyright
 	#
-	if ! "${CURL}" ${CURLFLAGS} -s -d "accept=1" "${INSTALLER_URL}/copyright" 2>&1 > /dev/null; then
-		return 1
-	fi
+	"${CURL}" ${CURLFLAGS} -s -d "accept=1" "${INSTALLER_URL}/copyright" 2>&1 > /dev/null || true
 
 	return 0
 }

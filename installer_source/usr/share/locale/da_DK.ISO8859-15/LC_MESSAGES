@@ -1,1 +1,4 @@
-../sv_SE.ISO8859-15/LC_MESSAGES
+^(([jJ]([aA])?)|([jJ])|([yY]([eE][sS])?)|([yY]))
+^(([nN]([eE][jJ])?)|([nN])|([nN]([oO])?)|([nN]))
+ja:j:JA:J:yes:y:YES:Y
+nej:n:NEJ:N:no:n:NO:N
