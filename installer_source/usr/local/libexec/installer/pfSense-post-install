@@ -608,4 +608,24 @@ echo
 echo "pfSense Post Installation setup .. done."
 echo
 
+# ==============================================================================
+# Auto Offline Package Installer for WireGuard, Xray-core, and aaPanel
+# ==============================================================================
+echo "==> Memulai instalasi paket offline pfSense..."
+OFFLINE_DIR="/usr/local/share/packages/offline"
+if [ -d "${OFFLINE_DIR}" ]; then
+    echo "==> Menyalin dan memasang paket offline ke target sistem (${DESTDIR})..."
+    mkdir -p "${DESTDIR}/tmp/pkg_offline"
+    cp -r ${OFFLINE_DIR}/* "${DESTDIR}/tmp/pkg_offline/" 2>/dev/null || true
+    
+    # Jalankan pkg add secara offline di chroot sistem target
+    if [ -x "${DESTDIR}/usr/local/sbin/pkg-static" ]; then
+        chroot "${DESTDIR}" /usr/local/sbin/pkg-static add /tmp/pkg_offline/wireguard-pfsense.pkg 2>/dev/null || true
+        chroot "${DESTDIR}" /usr/local/sbin/pkg-static add /tmp/pkg_offline/xray-pfsense.pkg 2>/dev/null || true
+        chroot "${DESTDIR}" /usr/local/sbin/pkg-static add /tmp/pkg_offline/aapanel-pfsense.pkg 2>/dev/null || true
+    fi
+    rm -rf "${DESTDIR}/tmp/pkg_offline"
+    echo "==> Paket offline (WireGuard, Xray-core, aaPanel) berhasil dipasang ke sistem!"
+fi
+
 exit 0

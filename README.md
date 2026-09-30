@@ -6,13 +6,21 @@ Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO,
 
 ## 🚀 Fitur Utama
 
-1. **Kode Sumber Installer pfSense (dari ISO)**:
-   - Diekstrak langsung dari `netgate-installer-amd64.iso`.
-   - Modul `bsdinstall`, `pfSense-installer.sh`, Web-Installer UI, konfigurasi Lua bootloader, dan konfigurasi sistem.
-2. **WireGuard VPN**:
+1. **Paket Instalasi Offline ke Dalam ISO**:
+   - Seluruh paket (`wireguard-pfsense.pkg`, `xray-pfsense.pkg`, dan `aapanel-pfsense.pkg`) telah disisipkan ke dalam direktori offline installer (`/usr/local/share/packages/offline/`).
+   - Hook instalasi otomatis disematkan pada `installer_source/usr/local/libexec/installer/pfSense-post-install` sehingga saat instalasi dari ISO selesai, ketiga paket otomatis terpasang tanpa memerlukan koneksi internet.
+   - Tersedia skrip remaster ISO: `scripts/remaster_iso.sh`.
+
+2. **Integrasi Menu WebGUI pfSense**:
+   - **VPN > WireGuard** (`/vpn_wg.php`): Mengelola interface `wg0`, status handshake, generate keypair, dan konfigurasi peer.
+   - **VPN > Xray-core** (`/vpn_xray.php`): Mengelola daemon Xray, kontrol status, editor `config.json` multi-protokol (VLESS, VMess, Trojan, Socks5, TUN, Routing), dan pemantau log error.
+   - **aaPanel Mandiri (Tanpa Menu di pfSense)**: Sesuai rancangan, aaPanel **TIDAK** ditampilkan di WebGUI pfSense karena aaPanel telah memiliki antarmuka WebGUI modern tersendiri (port 8888).
+
+3. **WireGuard VPN**:
    - Modul kernel FreeBSD `wireguard-kmod` & tools `wg-quick`.
    - Templat konfigurasi server & peer siap pakai.
-3. **Xray-core (Multi-Protocol & Transparent Routing)**:
+
+4. **Xray-core (Multi-Protocol & Transparent Routing)**:
    - Mendukung **VLESS** (dengan Reality / XTLS).
    - Mendukung **VMess** (dengan WebSocket & TLS).
    - Mendukung **Trojan** (dengan TLS).
@@ -20,9 +28,7 @@ Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO,
    - Mendukung antarmuka **TUN / Dokodemo-door** untuk proxy transparan seluruh trafik router.
    - Aturan **Routing** tingkat lanjut (GeoIP & GeoSite: pemisahan trafik lokal, proxy, blokir iklan).
    - Layanan FreeBSD rc.d daemon (`service xray start|stop|status`).
-4. **aaPanel Integration**:
-   - Skrip instalasi aaPanel resmi untuk Linux VPS.
-   - Penjelasan arsitektur FreeBSD vs Linux serta panduan menjalankan aaPanel di dalam VM `bhyve` di pfSense.
+
 5. **Linux-to-pfSense Reinstall / Takeover Script (CHR-Style)**:
    - Menimpa OS Linux aktif (Ubuntu / Debian / CentOS / AlmaLinux / Rocky) secara otomatis tanpa perlu membuka ISO via panel provider.
 

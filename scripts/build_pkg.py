@@ -17,6 +17,23 @@ PACKAGES_DIR = BASE_DIR / "packages"
 OUTPUT_DIR = PACKAGES_DIR / "pkg"
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
+import time
+
+def safe_rmtree(path, retries=5, delay=0.5):
+    p = Path(path)
+    if not p.exists():
+        return
+    for i in range(retries):
+        try:
+            shutil.rmtree(p)
+            return
+        except Exception:
+            time.sleep(delay)
+    try:
+        shutil.rmtree(p, ignore_errors=True)
+    except Exception:
+        pass
+
 def run_cmd(cmd, cwd=None):
     print(f"[*] Menjalankan: {' '.join(str(c) for c in cmd)}")
     res = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True)
@@ -81,6 +98,14 @@ def build_wireguard():
     (staging / "usr/local/bin").mkdir(parents=True)
     (staging / "usr/local/etc/wireguard").mkdir(parents=True)
     (staging / "usr/local/etc/rc.d").mkdir(parents=True)
+    (staging / "usr/local/pkg").mkdir(parents=True)
+    (staging / "usr/local/www").mkdir(parents=True)
+
+    # WebGUI Menu & Page
+    if (PACKAGES_DIR / "wireguard/usr/local/pkg/wireguard.xml").exists():
+        shutil.copy2(PACKAGES_DIR / "wireguard/usr/local/pkg/wireguard.xml", staging / "usr/local/pkg/wireguard.xml")
+    if (PACKAGES_DIR / "wireguard/usr/local/www/vpn_wg.php").exists():
+        shutil.copy2(PACKAGES_DIR / "wireguard/usr/local/www/vpn_wg.php", staging / "usr/local/www/vpn_wg.php")
 
     # 1. wireguard-manager CLI
     manager_sh = """#!/bin/sh
@@ -175,28 +200,38 @@ echo "[✓] WireGuard package terpasang! Jalankan 'wireguard-manager genkey' lal
         root_staging_dir=staging,
         post_install_script=post_install
     )
-    shutil.rmtree(staging)
+    safe_rmtree(staging)
 
 def build_xray():
     print("=== Membangun xray-pfsense.pkg ===")
     staging = BASE_DIR / "staging_xray"
     if staging.exists():
-        shutil.rmtree(staging)
+        safe_rmtree(staging)
     staging.mkdir(parents=True)
 
     (staging / "usr/local/bin").mkdir(parents=True)
     (staging / "usr/local/share/xray").mkdir(parents=True)
     (staging / "usr/local/etc/xray").mkdir(parents=True)
     (staging / "usr/local/etc/rc.d").mkdir(parents=True)
+    (staging / "usr/local/pkg").mkdir(parents=True)
+    (staging / "usr/local/www").mkdir(parents=True)
 
-    extracted_dir = PACKAGES_DIR / "xray/extracted"
-    # Salin binary xray & dat files
-    if (extracted_dir / "xray").exists():
-        shutil.copy2(extracted_dir / "xray", staging / "usr/local/bin/xray")
-    if (extracted_dir / "geoip.dat").exists():
-        shutil.copy2(extracted_dir / "geoip.dat", staging / "usr/local/share/xray/geoip.dat")
-    if (extracted_dir / "geosite.dat").exists():
-        shutil.copy2(extracted_dir / "geosite.dat", staging / "usr/local/share/xray/geosite.dat")
+    # WebGUI Menu & Page
+    if (PACKAGES_DIR / "xray/usr/local/pkg/xray.xml").exists():
+        shutil.copy2(PACKAGES_DIR / "xray/usr/local/pkg/xray.xml", staging / "usr/local/pkg/xray.xml")
+    if (PACKAGES_DIR / "xray/usr/local/www/vpn_xray.php").exists():
+        shutil.copy2(PACKAGES_DIR / "xray/usr/local/www/vpn_xray.php", staging / "usr/local/www/vpn_xray.php")
+
+    xray_bin = PACKAGES_DIR / "xray/usr/local/bin/xray"
+    geoip_dat = PACKAGES_DIR / "xray/usr/local/share/xray/geoip.dat"
+    geosite_dat = PACKAGES_DIR / "xray/usr/local/share/xray/geosite.dat"
+
+    if xray_bin.exists():
+        shutil.copy2(xray_bin, staging / "usr/local/bin/xray")
+    if geoip_dat.exists():
+        shutil.copy2(geoip_dat, staging / "usr/local/share/xray/geoip.dat")
+    if geosite_dat.exists():
+        shutil.copy2(geosite_dat, staging / "usr/local/share/xray/geosite.dat")
 
     # Salin config.json
     shutil.copy2(PACKAGES_DIR / "xray/config.json", staging / "usr/local/etc/xray/config.json")
@@ -242,13 +277,13 @@ echo "[✓] Xray-core multi-protokol terpasang! Kelola dengan 'xray-control star
         root_staging_dir=staging,
         post_install_script=post_install
     )
-    shutil.rmtree(staging)
+    safe_rmtree(staging)
 
 def build_aapanel():
     print("=== Membangun aapanel-pfsense.pkg ===")
     staging = BASE_DIR / "staging_aapanel"
     if staging.exists():
-        shutil.rmtree(staging)
+        safe_rmtree(staging)
     staging.mkdir(parents=True)
 
     (staging / "usr/local/bin").mkdir(parents=True)
@@ -322,7 +357,7 @@ echo "[✓] aaPanel integration package terpasang! Ketik 'aapanel-pfsense' untuk
         root_staging_dir=staging,
         post_install_script=post_install
     )
-    shutil.rmtree(staging)
+    safe_rmtree(staging)
 
 if __name__ == "__main__":
     build_wireguard()

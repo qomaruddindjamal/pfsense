@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE packagegui SYSTEM "../schema/packages.dtd">
+<?xml-stylesheet type="text/xsl" href="../xsl/package.xsl"?>
+<packagegui>
+	<name>xray</name>
+	<version>1.8.24</version>
+	<title>VPN: Xray-core</title>
+	<menu>
+		<name>Xray-core</name>
+		<section>VPN</section>
+		<url>/vpn_xray.php</url>
+		<tooltiptext>Configure Xray-core (VLESS, VMess, Trojan, Socks5, TUN and Routing)</tooltiptext>
+	</menu>
+	<service>
+		<name>xray</name>
+		<rcfile>xray</rcfile>
+		<executable>xray</executable>
+		<description><![CDATA[Xray-core Multi-Protocol Anti-Censorship Service]]></description>
+	</service>
+</packagegui>
