@@ -1,6 +1,6 @@
-# pfSense Custom Edition: WireGuard, Xray & Linux Takeover (CHR-Style)
+# pfSense Custom Edition: WireGuard, Xray & Linux Takeover
 
-Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO, integrasi paket **WireGuard** dan **Xray-core** (VLESS, VMess, Trojan, Socks5, TUN, Routing), panduan **aaPanel**, serta skrip otomatisasi untuk **mengganti / menimpa Linux VPS yang sedang berjalan menjadi pfSense** (seperti metode instalasi MikroTik CHR via `dd`).
+Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO, integrasi paket **WireGuard** dan **Xray-core** (VLESS, VMess, Trojan, Socks5, TUN, Routing), panduan **aaPanel**, serta skrip otomatisasi untuk **mengganti / menimpa Linux VPS yang sedang berjalan menjadi pfSense**.
 
 ---
 
@@ -29,12 +29,12 @@ Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO,
    - Aturan **Routing** tingkat lanjut (GeoIP & GeoSite: pemisahan trafik lokal, proxy, blokir iklan).
    - Layanan FreeBSD rc.d daemon (`service xray start|stop|status`).
 
-5. **Linux-to-pfSense Reinstall / Takeover Script (CHR-Style)**:
+5. **Linux-to-pfSense Reinstall / Takeover Script**:
    - Menimpa OS Linux aktif (Ubuntu / Debian / CentOS / AlmaLinux / Rocky) secara otomatis tanpa perlu membuka ISO via panel provider.
 
 ---
 
-## ⚡ 1. Cara Mengganti Linux Menjadi pfSense (Seperti MikroTik CHR)
+## ⚡ 1. Cara Mengganti Linux Menjadi pfSense
 
 Pada VPS Linux aktif Anda (masuk via SSH sebagai root), jalankan perintah 1-baris berikut:
 
@@ -160,7 +160,7 @@ sh packages/xray/install-xray.sh
 └── scripts/
     ├── build_pkg.py                    # Script pembuat paket .pkg
     ├── remaster_iso.sh                 # Script remaster ISO offline
-    ├── install-pfsense-from-linux.sh   # Skrip takeover menimpa Linux ke pfSense (CHR-Style)
+    ├── install-pfsense-from-linux.sh   # Skrip takeover menimpa Linux ke pfSense
     ├── setup-pfsense-all.sh            # Skrip otomatis pasang WireGuard & Xray
     └── config.xml.template             # Template konfigurasi pfSense otomatis
 ```
