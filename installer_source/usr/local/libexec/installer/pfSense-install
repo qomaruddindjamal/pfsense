@@ -111,8 +111,10 @@ pfSense_install() {
 	# Check if Offline Installation Media is present (Fast Local Install - No Internet Needed)
 	#
 	OFFLINE_PKG_DIR="/usr/local/share/packages/offline"
+	[ ! -d "${OFFLINE_PKG_DIR}" ] && [ -d "/packages/All" ] && OFFLINE_PKG_DIR="/packages/All"
+	[ ! -d "${OFFLINE_PKG_DIR}" ] && [ -d "/packages" ] && OFFLINE_PKG_DIR="/packages"
 	[ ! -d "${OFFLINE_PKG_DIR}" ] && [ -d "/pkg" ] && OFFLINE_PKG_DIR="/pkg"
-	if [ -d "${OFFLINE_PKG_DIR}" ] || [ -d "/usr/local/share/packages" ]; then
+	if [ -d "${OFFLINE_PKG_DIR}" ] || [ -d "/usr/local/share/packages" ] || [ -d "/packages" ]; then
 		echo "======================================================================"
 		echo "    MODE INSTALASI OFFLINE CEPAT TERDETEKSI (TANPA DOWNLOAD INTERNET) "
 		echo "======================================================================"
@@ -125,7 +127,18 @@ pfSense_install() {
 		done
 		mkdir -p "${_destdir}/dev" "${_destdir}/proc" "${_destdir}/tmp" "${_destdir}/mnt" "${_destdir}/cf/conf"
 
-		echo "[*] Memasang paket offline (WireGuard, Xray-core, Virtual aaPanel)..."
+		# Auto-join split package parts if present
+		for _part in "${OFFLINE_PKG_DIR}"/*.pkg.partaa; do
+			if [ -f "${_part}" ]; then
+				_target="${_part%.partaa}"
+				if [ ! -f "${_target}" ]; then
+					echo "  -> Menggabungkan partisi $(basename "${_target}")..."
+					cat "${_target}".part* > "${_target}" 2>/dev/null || true
+				fi
+			fi
+		done
+
+		echo "[*] Memasang paket offline (WireGuard, Xray-core, Virtual aaPanel, dll.)..."
 		for _pkg in "${OFFLINE_PKG_DIR}"/*.pkg; do
 			if [ -f "${_pkg}" ]; then
 				echo "  -> Memasang $(basename "${_pkg}")..."
