@@ -50,9 +50,29 @@ bash <(curl -sSL https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main
 
 ---
 
-## 🛡️ 2. Pemasangan WireGuard & Xray di pfSense
+## 📦 2. Pemasangan Paket Berformat `.pkg` di pfSense (Rekomendasi Cepat)
 
-Setelah masuk ke console shell pfSense (via SSH atau Serial/VNC menu opsi `8) Shell`), jalankan instalasi all-in-one:
+Anda dapat menginstal paket secara langsung di console shell pfSense menggunakan perintah `pkg add`:
+
+```sh
+# 1. Pasang WireGuard (.pkg)
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/wireguard-pfsense.pkg
+
+# 2. Pasang Xray-core (.pkg) (VLESS, VMess, Trojan, Socks5, TUN, Routing)
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/xray-pfsense.pkg
+
+# 3. Pasang aaPanel (.pkg)
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/aapanel-pfsense.pkg
+```
+
+Setelah paket terpasang, gunakan CLI bawaan masing-masing:
+- **WireGuard**: `wireguard-manager {start|stop|restart|status|genkey}`
+- **Xray-core**: `xray-control {start|stop|restart|status|test|version}` atau `service xray start`
+- **aaPanel**: `aapanel-pfsense {setup-bhyve|install-linux|status}`
+
+---
+
+## 🛠️ 3. Pemasangan Manual / Script di pfSense
 
 ```sh
 # Clone repository ini di pfSense
