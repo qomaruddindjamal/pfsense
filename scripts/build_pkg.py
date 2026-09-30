@@ -279,8 +279,8 @@ echo "[✓] Xray-core multi-protokol terpasang! Kelola dengan 'xray-control star
     )
     safe_rmtree(staging)
 
-def build_aapanel():
-    print("=== Membangun aapanel-pfsense.pkg ===")
+def build_virtual():
+    print("=== Membangun virtual.pkg (aaPanel VM Engine) ===")
     staging = BASE_DIR / "staging_aapanel"
     if staging.exists():
         safe_rmtree(staging)
@@ -357,13 +357,10 @@ echo "[✓] aaPanel integration package terpasang! Ketik 'aapanel-pfsense' untuk
         root_staging_dir=staging,
         post_install_script=post_install
     )
-    # Buat juga salinan aapanel-pfsense.pkg untuk kompatibilitas
-    if (OUTPUT_DIR / "virtual.pkg").exists():
-        shutil.copy2(OUTPUT_DIR / "virtual.pkg", OUTPUT_DIR / "aapanel-pfsense.pkg")
     safe_rmtree(staging)
 
 if __name__ == "__main__":
     build_wireguard()
     build_xray()
-    build_aapanel()
+    build_virtual()
     print("[*] Selesai membangun seluruh paket .pkg!")

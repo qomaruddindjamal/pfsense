@@ -7,7 +7,7 @@ Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO,
 ## 🚀 Fitur Utama
 
 1. **Paket Instalasi Offline ke Dalam ISO**:
-   - Seluruh paket (`wireguard-pfsense.pkg`, `xray-pfsense.pkg`, dan `aapanel-pfsense.pkg`) telah disisipkan ke dalam direktori offline installer (`/usr/local/share/packages/offline/`).
+   - Seluruh paket (`wireguard-pfsense.pkg`, `xray-pfsense.pkg`, dan `virtual.pkg`) telah disisipkan ke dalam direktori offline installer (`/usr/local/share/packages/offline/`).
    - Hook instalasi otomatis disematkan pada `installer_source/usr/local/libexec/installer/pfSense-post-install` sehingga saat instalasi dari ISO selesai, ketiga paket otomatis terpasang tanpa memerlukan koneksi internet.
    - Tersedia skrip remaster ISO: `scripts/remaster_iso.sh`.
 
@@ -67,14 +67,14 @@ pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages
 # 2. Pasang Xray-core (.pkg) (VLESS, VMess, Trojan, Socks5, TUN, Routing)
 pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/xray-pfsense.pkg
 
-# 3. Pasang aaPanel (.pkg)
-pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/aapanel-pfsense.pkg
+# 3. Pasang Mesin Virtual + aaPanel (.pkg)
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/virtual.pkg
 ```
 
 Setelah paket terpasang, gunakan CLI bawaan masing-masing:
 - **WireGuard**: `wireguard-manager {start|stop|restart|status|genkey}`
 - **Xray-core**: `xray-control {start|stop|restart|status|test|version}` atau `service xray start`
-- **aaPanel**: `aapanel-pfsense {setup-bhyve|install-linux|status}`
+- **Mesin Virtual / aaPanel**: `aapanel-pfsense {setup-bhyve|install-linux|status}`
 
 ---
 
@@ -139,6 +139,10 @@ sh packages/xray/install-xray.sh
 │   ├── usr/local/libexec/installer/    # Shell installer pfSense (pfSense-installer.sh, dll)
 │   └── usr/local/www/web-installer/    # Web installer UI Netgate
 ├── packages/
+│   ├── pkg/                            # Paket resmi siap pasang (.pkg)
+│   │   ├── wireguard-pfsense.pkg       # Modul kernel & WebGUI WireGuard
+│   │   ├── xray-pfsense.pkg            # Xray multi-protokol & WebGUI VPN
+│   │   └── virtual.pkg                 # Mesin Virtual & aaPanel di dalamnya
 │   ├── wireguard/                      # Skrip & konfigurasi WireGuard
 │   │   ├── install-wireguard.sh
 │   │   ├── wg0.conf.example
@@ -154,6 +158,8 @@ sh packages/xray/install-xray.sh
 │       ├── setup-aapanel-bhyve.sh
 │       └── README.md
 └── scripts/
+    ├── build_pkg.py                    # Script pembuat paket .pkg
+    ├── remaster_iso.sh                 # Script remaster ISO offline
     ├── install-pfsense-from-linux.sh   # Skrip takeover menimpa Linux ke pfSense (CHR-Style)
     ├── setup-pfsense-all.sh            # Skrip otomatis pasang WireGuard & Xray
     └── config.xml.template             # Template konfigurasi pfSense otomatis

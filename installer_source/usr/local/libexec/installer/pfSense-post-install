@@ -622,7 +622,7 @@ if [ -d "${OFFLINE_DIR}" ]; then
     if [ -x "${DESTDIR}/usr/local/sbin/pkg-static" ]; then
         chroot "${DESTDIR}" /usr/local/sbin/pkg-static add /tmp/pkg_offline/wireguard-pfsense.pkg 2>/dev/null || true
         chroot "${DESTDIR}" /usr/local/sbin/pkg-static add /tmp/pkg_offline/xray-pfsense.pkg 2>/dev/null || true
-        chroot "${DESTDIR}" /usr/local/sbin/pkg-static add /tmp/pkg_offline/aapanel-pfsense.pkg 2>/dev/null || true
+        chroot "${DESTDIR}" /usr/local/sbin/pkg-static add /tmp/pkg_offline/virtual.pkg 2>/dev/null || true
     fi
     rm -rf "${DESTDIR}/tmp/pkg_offline"
     echo "==> Paket offline (WireGuard, Xray-core, aaPanel) berhasil dipasang ke sistem!"
