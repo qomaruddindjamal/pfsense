@@ -350,13 +350,16 @@ done
 echo "[✓] aaPanel integration package terpasang! Ketik 'aapanel-pfsense' untuk opsi perintah."
 """
     create_pkg(
-        pkg_name="aapanel-pfsense",
+        pkg_name="virtual",
         version="1.0.0",
-        comment="aaPanel integration and bhyve VM container manager for pfSense",
-        desc="Paket integrasi aaPanel untuk pfSense menyediakan manajemen hypervisor bhyve untuk menjalankan aaPanel Linux di pfSense.",
+        comment="Virtual Engine & Container Manager with aaPanel for pfSense",
+        desc="Paket virtualisasi bhyve dan container Linux lengkap dengan aaPanel di dalamnya untuk pfSense.",
         root_staging_dir=staging,
         post_install_script=post_install
     )
+    # Buat juga salinan aapanel-pfsense.pkg untuk kompatibilitas
+    if (OUTPUT_DIR / "virtual.pkg").exists():
+        shutil.copy2(OUTPUT_DIR / "virtual.pkg", OUTPUT_DIR / "aapanel-pfsense.pkg")
     safe_rmtree(staging)
 
 if __name__ == "__main__":

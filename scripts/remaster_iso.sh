@@ -33,8 +33,10 @@ echo "[*] Menyisipkan paket offline WireGuard, Xray, dan aaPanel..."
 mkdir -p "${WORK_DIR}/usr/local/share/packages/offline"
 cp -r installer_source/usr/local/share/packages/offline/* "${WORK_DIR}/usr/local/share/packages/offline/"
 
-# 3. Timpa pfSense-post-install dengan hook installer offline
+# 3. Timpa modul installer dengan versi offline cepat
+cp -f installer_source/usr/local/libexec/installer/pfSense-install "${WORK_DIR}/usr/local/libexec/installer/"
 cp -f installer_source/usr/local/libexec/installer/pfSense-post-install "${WORK_DIR}/usr/local/libexec/installer/"
+chmod +x "${WORK_DIR}/usr/local/libexec/installer/pfSense-install"
 chmod +x "${WORK_DIR}/usr/local/libexec/installer/pfSense-post-install"
 
 # 4. Bangun kembali ISO bootable
