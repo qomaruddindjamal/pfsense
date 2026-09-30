@@ -329,6 +329,13 @@ esac
     with open(staging / "usr/local/bin/aapanel-pfsense", "w", newline="\n", encoding="utf-8") as f:
         f.write(cli_sh)
 
+    # Salin seluruh bundle offline aaPanel (panel_7_en.zip, bt7_en.init, dll) ke dalam paket
+    bundle_dir = PACKAGES_DIR / "aapanel/bundle"
+    if bundle_dir.exists():
+        for bfile in bundle_dir.iterdir():
+            if bfile.is_file():
+                shutil.copy2(bfile, staging / "usr/local/share/aapanel" / bfile.name)
+
     # Config file
     conf = """# Konfigurasi aaPanel pfSense Integration
 BHYVE_VM_NAME="aapanel-vm"
