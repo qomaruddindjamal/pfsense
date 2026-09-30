@@ -1,0 +1,17 @@
+/*
+ * Copyright 2018 Rubicon Communications, LLC
+ */
+
+#define MAGIC_CHAR 'L'
+
+#define IOCTL_LED_SET_STATUS    _IOWR(MAGIC_CHAR, 20, int)
+
+#define LED_SET_STATUS_RED    			0x00
+#define LED_SET_STATUS_GREEN    		0x01
+#define LED_SET_STATUS_OFF    			0x02
+
+#define LED_SET_STATUS_RED_FLASHING		0x03
+#define LED_SET_STATUS_GREEN_FLASHING		0x04
+#define LED_SET_STATUS_RED_GREEN_FLASHING	0x05
+
+#define IOCTL_GET_BUTTON_STATUS	_IOWR(MAGIC_CHAR, 21, int)

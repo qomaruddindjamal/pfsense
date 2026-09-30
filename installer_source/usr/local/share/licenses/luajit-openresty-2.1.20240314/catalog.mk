@@ -1,0 +1,13 @@
+_LICENSE=MIT PD
+_LICENSE_COMB=multi
+_LICENSE_NAME=Multiple (all of): MIT PD
+_LICENSE_PERMS=dist-mirror dist-sell pkg-mirror pkg-sell auto-accept
+_LICENSE_GROUPS=
+_LICENSE_NAME_MIT =MIT license / X11 license
+_LICENSE_PERMS_MIT =dist-mirror dist-sell pkg-mirror pkg-sell auto-accept
+_LICENSE_GROUPS_MIT =COPYFREE FSF GPL OSI
+_LICENSE_DISTFILES_MIT =openresty-luajit2-v2.1-20240314_GH0.tar.gz
+_LICENSE_NAME_PD =Public Domain
+_LICENSE_PERMS_PD =dist-mirror dist-sell pkg-mirror pkg-sell auto-accept
+_LICENSE_GROUPS_PD =GPL COPYFREE
+_LICENSE_DISTFILES_PD =openresty-luajit2-v2.1-20240314_GH0.tar.gz

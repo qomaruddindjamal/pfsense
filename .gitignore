@@ -15,3 +15,8 @@
 *~
 .DS_Store
 Thumbs.db
+
+# Debug symbols (FreeBSD kernel and library unstripped debug symbols > 100MB)
+*.debug
+usr/lib/debug/
+installer_source/usr/lib/debug/

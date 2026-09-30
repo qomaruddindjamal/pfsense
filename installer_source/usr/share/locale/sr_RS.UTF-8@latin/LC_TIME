@@ -1,0 +1,58 @@
+jan
+feb
+mar
+apr
+maj
+jun
+jul
+avg
+sep
+okt
+nov
+dec
+januar
+februar
+mart
+april
+maj
+jun
+jul
+avgust
+septembar
+oktobar
+novembar
+decembar
+ned
+pon
+uto
+sre
+čet
+pet
+sub
+nedelja
+ponedeljak
+utorak
+sreda
+četvrtak
+petak
+subota
+%H.%M.%S
+%d.%m.%Y
+%d %b %Y %X
+pre podne
+po podne
+%a, %d %b %Y %X %Z
+januar
+februar
+mart
+april
+maj
+jun
+jul
+avgust
+septembar
+oktobar
+novembar
+decembar
+dm
+%I.%M.%S %p

@@ -1,0 +1,13 @@
+_LICENSE=GPLv2+ LGPL21+
+_LICENSE_COMB=multi
+_LICENSE_NAME=Multiple (all of): GPLv2+ LGPL21+
+_LICENSE_PERMS=dist-mirror dist-sell pkg-mirror pkg-sell auto-accept
+_LICENSE_GROUPS=
+_LICENSE_NAME_GPLv2+ =GNU General Public License version 2 (or later)
+_LICENSE_PERMS_GPLv2+ =dist-mirror dist-sell pkg-mirror pkg-sell auto-accept
+_LICENSE_GROUPS_GPLv2+ =FSF GPL OSI
+_LICENSE_DISTFILES_GPLv2+ =libgcrypt-1.10.3.tar.bz2
+_LICENSE_NAME_LGPL21+ =GNU Lesser General Public License version 2.1 (or later)
+_LICENSE_PERMS_LGPL21+ =dist-mirror dist-sell pkg-mirror pkg-sell auto-accept
+_LICENSE_GROUPS_LGPL21+ =FSF GPL OSI
+_LICENSE_DISTFILES_LGPL21+ =libgcrypt-1.10.3.tar.bz2

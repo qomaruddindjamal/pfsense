@@ -111,6 +111,7 @@ pfSense_install() {
 	# Check if Offline Installation Media is present (Fast Local Install - No Internet Needed)
 	#
 	OFFLINE_PKG_DIR="/usr/local/share/packages/offline"
+	[ ! -d "${OFFLINE_PKG_DIR}" ] && [ -d "/pkg" ] && OFFLINE_PKG_DIR="/pkg"
 	if [ -d "${OFFLINE_PKG_DIR}" ] || [ -d "/usr/local/share/packages" ]; then
 		echo "======================================================================"
 		echo "    MODE INSTALASI OFFLINE CEPAT TERDETEKSI (TANPA DOWNLOAD INTERNET) "

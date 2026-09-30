@@ -1,0 +1,31 @@
+Produced by: indexinfo 0.3.1.
+
+File: dir,	Node: Top	This is the top of the INFO tree
+
+  This (the Directory node) gives a menu of major topics.
+  Typing "q" exits, "?" lists all Info commands, "d" returns here,
+  "h" gives a primer for first-timers,
+  "mXXX<Return>" visits the XXX manual, etc.
+
+* Menu:
+
+Libraries
+* libgpg-error: (gpgrt).   Error codes and common code for GnuPG.
+* RLuserman: (rluserman).       The GNU readline library User's Manual.
+* Readline: (readline).       The GNU readline library API.
+* History: (history).       The GNU history library API.
+
+C++ libraries
+* autosprintf: (autosprintf).   Support for printf format strings in C++.
+
+Development
+* libffi: (libffi).             Portable foreign function interface library.
+
+Software development
+* GNU libunistring: (libunistring).     Unicode string library.
+
+Software libraries
+* libidn2: (libidn2).	Internationalized domain names (IDNA2008/TR46) processing.
+
+Localization
+* idn2: (libidn2)Invoking idn2.	Internationalized Domain Name (IDNA2008/TR46) conversion.
