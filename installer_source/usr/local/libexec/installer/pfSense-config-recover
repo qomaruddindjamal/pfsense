@@ -1,0 +1,161 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-config-recover module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+
+#
+# Main
+#
+
+if [ ! -d "${RECOVERY_DIR}" ]; then
+	echo "Error: No recovered files found.  exiting."
+	exit 1
+fi
+
+unset DEV
+unset ENC
+unset DIR
+unset MOUNTP
+unset TYPE
+while getopts d:em:t:D: opt; do
+	case "${opt}" in
+	d)
+		DEV="${OPTARG}"
+		shift 2
+		;;
+	e)
+		ENC=1
+		shift
+		;;
+	m)
+		MOUNTP="${OPTARG}"
+		shift 2
+		;;
+	t)
+		TYPE="${OPTARG}"
+		shift 2
+		case "${TYPE}" in
+		MEDIA|RECOVERED)
+			;;
+		*)
+			echo "Error: Invalid configuration type: ${TYPE}"
+			exit 1
+			;;
+		esac
+		;;
+	D)
+		DIR="${OPTARG}"
+		shift 2
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ -z "${MOUNTP}" ]; then
+	echo "Error: No mount point specified.  exiting."
+	exit 1
+fi
+
+if [ -z "${TYPE}" ]; then
+	echo "Error: No configuration type.  exiting."
+	exit 1
+fi
+
+if [ "${TYPE}" = "RECOVERED" ] && [ -z "${DEV}" ]; then
+	echo "Error: No device for the recovered configuration.  exiting."
+	exit 1
+fi
+
+if [ "${TYPE}" = "RECOVERED" ]; then
+	TYPEDIR="recovered"
+	SUBDIR="${DEV}/"
+else
+	SUBDIR=""
+	TYPEDIR="install-media"
+	[ -n "${DIR}" ] && [ "${DIR}" != "root" ] && \
+	    SUBDIR="${DIR}/"
+fi
+SRC_DIR="${RECOVERY_DIR}/${TYPEDIR}/${SUBDIR}"
+SRC_FILE="config.xml"
+ENC_LABEL=""
+if [ -n "${ENC}" ] && [ "${ENC}" = "1" ]; then
+	ENC_LABEL="encrypted "
+	SRC_FILE="config.xml.dec"
+fi
+
+echo -n "Restoring the ${ENC_LABEL}config.xml from ${SRC_DIR%/} .. "
+
+# Copy the config.xml to the installed system.
+/bin/cp -r "${SRC_DIR}${SRC_FILE}" "${MOUNTP}/cf/conf/config.xml"
+
+# Set a flag to let the installed system know this may need extra processing.
+/usr/bin/touch "${MOUNTP}/cf/conf/installer_copied_config"
+
+#
+# Only set the package sync flag if the restored config.xml contains active
+# packages.
+#
+PKG="$(/usr/bin/grep -c '<package>' "${MOUNTP}/cf/conf/config.xml" 2> /dev/null)"
+if [ -n "${PKG}" ] && [ "${PKG}" -gt 0 ]; then
+	/usr/bin/touch "${MOUNTP}/cf/conf/needs_package_sync"
+fi
+
+#
+# If there is an existing configuration, then there is no need to run the
+# wizard.
+#
+if [ -r "${MOUNTP}/cf/conf/trigger_initial_wizard" ]; then
+	/bin/rm -f "${MOUNTP}/cf/conf/trigger_initial_wizard" 2> /dev/null
+fi
+
+# Create a trigger file if extra data is found.
+EXTRA_DATA="rrddata captiveportaldata dhcpddata dhcpdv6data voucherdata sshdata"
+for extradata in $EXTRA_DATA; do
+	EXTRA="$(/usr/bin/grep -c "<$extradata>" "${MOUNTP}/cf/conf/config.xml")"
+	if [ -n "${EXTRA}" ] && [ "${EXTRA}" -gt 0 ]; then
+		/usr/bin/touch "${MOUNTP}/cf/conf/restore_config_data"
+		break
+	fi
+done
+
+echo "Done."
+
+# Now restore the SSH keys - if any.
+for keytype in rsa ed25519; do
+	if [ -s "${SRC_DIR}ssh_host_${keytype}_key" ] && \
+	    [ -r "${SRC_DIR}ssh_host_${keytype}_key" ] && \
+	    [ -s "${SRC_DIR}ssh_host_${keytype}_key.pub" ] && \
+	    [ -r "${SRC_DIR}ssh_host_${keytype}_key.pub" ]; then
+		echo -n "Restoring the ${keytype} SSH key from ${SRC_DIR%/} .. "
+		/bin/mkdir -p "${MOUNTP}/etc/ssh" 2> /dev/null
+		/bin/cp "${SRC_DIR}ssh_host_${keytype}_key" \
+		    "${MOUNTP}/etc/ssh/ssh_host_${keytype}_key"
+		/bin/cp "${SRC_DIR}ssh_host_${keytype}_key.pub" \
+		    "${MOUNTP}/etc/ssh/ssh_host_${keytype}_key.pub"
+		echo "Done."
+	fi
+done
+
+echo
+
+exit 0

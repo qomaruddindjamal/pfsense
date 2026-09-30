@@ -1,0 +1,194 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-config-restore module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+
+config_password() {
+	local _id _pass _tmpfile _datafile
+
+	[ "${#}" -ne "1" ] && \
+	    return 1
+	_id="${1}"
+
+	_umask="$(/usr/bin/umask)"
+	/usr/bin/umask 066
+	_tmpfile="$(${MKTEMP})"
+	if ! "${BSDDIALOG}" --backtitle "$(get_title)" \
+	    --title " Configuration Restore " --colors \
+	    --passwordbox "\nPlease enter the password to decrypt the config.xml backup.\n" \
+	    0 0 2> "${_tmpfile}"; then
+		/usr/bin/umask "${_umask}"
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_pass="$("${CAT}" "${_tmpfile}")"
+	if [ -z "${_pass}" ]; then
+		unset _pass
+		errx "Warning!" \
+		    "\nEmpty password is not valid, please try again.\n"
+		return 2
+	fi
+	unset _pass
+	_datafile="$(${MKTEMP})"
+	echo -n "id=${_id}&pass=" > "${_datafile}"
+	"${CAT}" "${_tmpfile}" >> "${_datafile}"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+	/usr/bin/umask "${_umask}"
+
+	if ! cfg_password_set "${_datafile}"; then
+		"${RM}" -f "${_datafile}" 2> /dev/null
+		errx "Warning!" \
+		    "\nCannot decrypt the config.xml with the given password, please try again.\n"
+		return 2
+	fi
+	"${RM}" -f "${_datafile}" 2> /dev/null
+
+	return 0
+}
+
+config_select() {
+	local I _cfg_dir_menu _outfile _tmpfile
+
+	I=0
+	CFG_OPTS=""
+	while [ "${I}" -lt "${_CFG_COUNT}" ]; do
+		CFG_ID="$(json_read "${INFO}" ".restored_config[${I}].id")"
+		CFG_DEV="$(json_read "${INFO}" ".restored_config[${I}].dev")"
+		CFG_DIR="$(json_read "${INFO}" ".restored_config[${I}].dir")"
+		CFG_ENC="$(json_read "${INFO}" ".restored_config[${I}].encrypted")"
+		CFG_TYPE="$(json_read "${INFO}" ".restored_config[${I}].type")"
+
+		ENC_LABEL=""
+		[ -n "${CFG_ENC}" ] && [ "${CFG_ENC}" = "true" ] && \
+		    ENC_LABEL="encrypted "
+		if [ "${CFG_TYPE}" = "RECOVERED" ]; then
+			CFG_OPTS="${CFG_OPTS} \
+\"${CFG_ID}-${CFG_DEV}\" \"Recovered ${ENC_LABEL}config.xml from ${CFG_DEV}\" \
+\"Recovered from existing installation (${CFG_DEV})\""
+		else
+			if [ "${CFG_DIR}" = "root" ]; then
+				DIR_LABEL="/"
+				_cfg_dir_menu="/"
+			else
+				DIR_LABEL="/${CFG_DIR}/"
+				_cfg_dir_menu="/${CFG_DIR}"
+			fi
+			CFG_OPTS="${CFG_OPTS} \
+\"${CFG_ID}-${_cfg_dir_menu}\" \"Installation media ${ENC_LABEL}${DIR_LABEL}config.xml\" \
+\"Installation Media Backup (${ENC_LABEL}${DIR_LABEL}config.xml)\""
+		fi
+		I=$(( ${I} + 1 ))
+	done
+
+	_cfg_selected="$(cfg_restore_selected "${INFO}")"
+
+	_tmpfile="$(${MKTEMP})"
+	cat << EOF > "${_tmpfile}"
+#!/bin/sh
+
+out="\${1}"
+if [ "\${#}" -ne 1 ]; then
+	exit 1
+fi
+
+"${BSDDIALOG}" --backtitle "$(get_title)" \
+    --title " Configuration Restore " --colors --item-help \
+    --menu "\nPlease select the configuration file to be restored.\n${_cfg_selected}" \
+    --ok-label "Select" --cancel-label "Back" 0 0 0 \
+    'Reset Selection' 'Continue without restore any of the backup files' \
+	'Continue without restore any of the backup files' \
+    ${CFG_OPTS} 2> "\${out}"
+error="\${?}"
+
+exit "\${error}"
+EOF
+
+	_outfile="$(${MKTEMP})"
+	if ! sh "${_tmpfile}" "${_outfile}"; then
+		"${RM}" -f "${_outfile}" 2> /dev/null
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+	[ ! -f "${_outfile}" ] && \
+	    return 1
+	CFG="$(cat "${_outfile}")"
+	"${RM}" -f "${_outfile}" 2> /dev/null
+
+	if [ "${CFG}" = "Reset Selection" ]; then
+		ID="-1"
+	else
+		ID="$(echo "${CFG}" | "${CUT}" -f1 -d-)"
+	fi
+	if ! cfg_setup "${ID}"; then
+		errx "Warning!" \
+		    "\nCannot set selected configuration file.\nConfiguration not applied!\n"
+		return 1
+	fi
+
+	ENC="$(json_read "${INFO}" ".restored_config[${ID}].encrypted")"
+	if [ -z "${ENC}" ] || [ "${ENC}" != "true" ]; then
+		return 0
+	fi
+
+	while [ 1 ]; do
+		config_password "${ID}"
+		error="${?}"
+		[ "${error}" -eq "0" ] && \
+		    break	# Done
+		[ "${error}" -eq "1" ] && \
+		    return 2	# Again
+	done
+
+	return 0
+}
+
+main_loop() {
+	while [ 1 ]; do
+		config_select
+		error="${?}"
+		[ "${error}" -eq "0" ] && \
+		    return 0
+		[ "${error}" -eq "1" ] && \
+		    return 1
+	done
+
+	return 0
+}
+
+#
+# Main
+#
+
+# Check if there is any config.xml backup in the staging area.
+_CFG_COUNT="$(cfg_count)"
+[ "${_CFG_COUNT}" -lt 1 ] && \
+    exit 0
+
+INFO="$(get_info)"
+[ -z "${INFO}" ] && \
+    exit 0
+
+if ! main_loop; then
+	exit 1
+fi
+
+exit 0

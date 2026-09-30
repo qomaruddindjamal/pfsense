@@ -1,0 +1,224 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-lan-setup module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+
+dhcpd_write_config() {
+	local _ip _network _mask _range_start _range_end
+
+	if [ "${#}" -ne 5 ]; then
+		return 1
+	fi
+	_ip="${1}"
+	_network="${2}"
+	_mask="${3}"
+	_range_start="${4}"
+	_range_end="${5}"
+
+	if [ ! -f "${DHCPD_LEASES}" ]; then
+		/usr/bin/touch "${DHCPD_LEASES}"
+	fi
+
+	/bin/mkdir -p "$(dirname "${DHCPD_CONF}")"
+	/bin/cat << EOF > "${DHCPD_CONF}"
+# pfSense Installer dhcpd.conf
+
+default-lease-time 600;
+max-lease-time 7200;
+
+ddns-update-style none;
+authoritative;
+
+log-facility local7;
+
+subnet ${_network} netmask ${_mask} {
+  range ${_range_start} ${_range_end};
+  option domain-name-servers ${_ip};
+  option routers ${_ip};
+}
+EOF
+
+	return 0
+}
+
+unset DHCPD
+unset IF
+unset IP
+unset MASK
+unset MASKBITS
+unset NETWORK
+unset RANGE_END
+unset RANGE_START
+unset TYPE
+unset UNBOUND
+unset VLAN
+unset VLAN_PCP
+
+while getopts i:p:B:DE:I:M:N:S:T:UV: opt; do
+	case "${opt}" in
+	i)
+		IF="${OPTARG}"
+		shift 2
+		;;
+	p)
+		VLAN_PCP="${OPTARG}"
+		shift 2
+		;;
+	B)
+		MASKBITS="${OPTARG}"
+		shift 2
+		;;
+	D)
+		DHCPD=1
+		shift
+		;;
+	E)
+		RANGE_END="${OPTARG}"
+		shift 2
+		;;
+	I)
+		IP="${OPTARG}"
+		shift 2
+		;;
+	M)
+		MASK="${OPTARG}"
+		shift 2
+		;;
+	N)
+		NETWORK="${OPTARG}"
+		shift 2
+		;;
+	S)
+		RANGE_START="${OPTARG}"
+		shift 2
+		;;
+	T)
+		TYPE="${OPTARG}"
+		shift 2
+		;;
+	U)
+		UNBOUND=1
+		shift
+		;;
+	V)
+		VLAN="${OPTARG}"
+		shift 2
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ -z "${IF}" ]; then
+	echo "Error: No interface name provided."
+	exit 1
+fi
+_if="$(if_name "${IF}" "${VLAN}")"
+# Create the VLAN interface if necessary.
+if [ -n "${_if}" ] && [ "${IF}" != "${_if}" ]; then
+	[ -z "${VLAN_PCP}" ] && \
+	    VLAN_PCP="0"
+	if ! /sbin/ifconfig "${_if}" create; then
+		echo "Warning: Cannot create VLAN ${_if}"
+	fi
+	if ! /sbin/ifconfig "${_if}" vlanpcp "${VLAN_PCP}"; then
+		echo "Warning: Cannot create VLAN ${_if}"
+	fi
+	if ! /sbin/ifconfig "${_if}" up; then
+		echo "Warning: Cannot set VLAN ${_if} UP"
+	fi
+	if ! /sbin/ifconfig "${IF}" up; then
+		echo "Warning: Cannot set VLAN parent ${IF} UP"
+	fi
+fi
+
+case "${TYPE}" in
+DHCP)
+	if [ -z "${_if}" ]; then
+		echo "Error: Invalid arguments for DHCP."
+		exit 1
+	fi
+	if ! /sbin/ifconfig "${_if}" up; then
+		echo "Error: Failed to set the ${_if} interface UP."
+		exit 1
+	fi
+	if ! dhclient_kill "${_if}"; then
+		echo "Warning: Failed to kill the ${_if} dhclient."
+	fi
+	if ! /sbin/dhclient "${_if}"; then
+		echo "Error: Cannot start the dhclient."
+		exit 1
+	fi
+	;;
+STATIC)
+	if [ -z "${_if}" ] || \
+	    [ -z "${IP}" ] || \
+	    [ -z "${MASK}" ] || \
+	    [ -z "${MASKBITS}" ] || \
+	    [ -z "${NETWORK}" ]; then
+		echo "Error: Invalid arguments for fixed IP."
+		exit 1
+	fi
+	if ! /sbin/ifconfig "${_if}" up; then
+		echo "Error: Failed to set the ${_if} interface UP."
+		exit 1
+	fi
+	/usr/bin/killall dhcpd
+	# Set up the interface IP.
+	if ! /sbin/ifconfig "${_if}" "${IP}" netmask "${MASK}"; then
+		echo "Error: Failed to set the LAN interface IP address."
+		echo "${_if}: ${IP}/${MASK}"
+		exit 1
+	fi
+	if [ -n "${UNBOUND}" ] && [ "${UNBOUND}" = "1" ]; then
+		if ! "${INSTALL_INC_PATH}/pfSense-unbound" \
+		    -I "${IP}" -N "${NETWORK}" -B "${MASKBITS}"; then
+			echo "Error: Cannot configure and/or start the unbound daemon."
+			exit 1
+		fi
+	fi
+	if [ -n "${DHCPD}" ] && [ "${DHCPD}" = "1" ]; then
+		if [ -z "${RANGE_END}" ] || [ -z "${RANGE_START}" ]; then
+			echo "Error: Invalid arguments for DHCPD."
+			exit 1
+		fi
+
+		# Create the dhcpd configuration files.
+		if ! dhcpd_write_config "${IP}" "${NETWORK}" "${MASK}" \
+		    "${RANGE_START}" "${RANGE_END}"; then
+			echo "Error: Failed to create the DHCPD configuration file."
+			exit 1
+		fi
+		# Start the dhcpd.
+		if ! /usr/local/sbin/dhcpd -cf "${DHCPD_CONF}" "${_if}"; then
+			echo "Error: Cannot start the dhcpd daemon."
+			exit 1
+		fi
+	fi
+	;;
+*)
+	echo "Error: Invalid LAN type."
+	exit 1
+	;;
+esac
+
+exit 0

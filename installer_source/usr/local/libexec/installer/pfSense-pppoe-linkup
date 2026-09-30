@@ -1,0 +1,75 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-pppoe-linkup module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2015-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+
+IF="${1}"
+PROTOCOL="${2}"
+LOCAL_IP="${3}"
+REMOTE_IP="${4}"
+AUTH_NAME="${5}"
+DNS1_RAW="${6}"
+DNS2_RAW="${7}"
+LOCAL_DNS="$(get_unbound_local)"
+
+"${CAT}" <<EOF | "${LOGGER}" -p daemon.info
+${0}:
+IF=${IF}
+PROTOCOL=${PROTOCOL}
+LOCAL_IP=${LOCAL_IP}
+REMOTE_IP=${REMOTE_IP}
+AUTH_NAME=${AUTH_NAME}
+DNS1_RAW=${DNS1_RAW}
+DNS2_RAW=${DNS2_RAW}
+LOCAL_DNS=${LOCAL_DNS}
+EOF
+
+case "${PROTOCOL}" in
+"inet")
+	"${ROUTE}" delete default
+	"${ROUTE}" add default "${REMOTE_IP}"
+	;;
+"inet6")
+	;;
+*)
+	echo "Error: Invalid Protocol: ${PROTOCOL}"
+	exit 1
+esac
+
+if [ -n "${IF}" ]; then
+	# Remove the existing resolv.conf entries.
+	"${RESOLVCONF}" -d "${IF}"
+	NS="nameserver"
+	if [ -n "{LOCAL_DNS}" ] && [ "${LOCAL_DNS}" = "1" ]; then
+		NS="${NS} 127.0.0.1"
+	fi
+	if [ -n "${DNS1_RAW}" ]; then
+		NS="${NS} ${DNS1_RAW}"
+	fi
+	if [ -n "${DNS2_RAW}" ]; then
+		NS="${NS} ${DNS2_RAW}"
+	fi
+	if [ "${NS}" != "nameserver" ]; then
+		echo "${NS}" | "${RESOLVCONF}" -a "${IF}"
+	fi
+fi
+
+exit 0

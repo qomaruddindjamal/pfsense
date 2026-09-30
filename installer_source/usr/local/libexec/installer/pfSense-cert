@@ -1,0 +1,83 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-cert module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+CERT_C="US"
+CERT_ST="Texas"
+CERT_L="Austin"
+CERT_O="pfSense Installer Self-Signed Certificate"
+CERT_EA="admin@installer.pfsense"
+CERT_CN="installer.pfSense"
+CERT_DIR="/var/etc"
+CERT_LAN_DEFAULT="192.168.1.1"
+CERT_LOCALHOST="127.0.0.1"
+CERT_FILE="${CERT_DIR}/cert.pem"
+CERT_KEY_FILE="${CERT_DIR}/cert.key"
+
+unset CREATE
+unset FORCE
+unset LAN_IP
+unset NGINX_RELOAD
+
+while getopts I:cfr opt; do
+	case "${opt}" in
+	"I")
+		LAN_IP="${OPTARG}"
+		shift 2
+		;;
+	"c")
+		CREATE=1
+		shift
+		;;
+	"f")
+		FORCE=1
+		shift
+		;;
+	"r")
+		NGINX_RELOAD=1
+		shift
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+[ -z "${LAN_IP}" ] && \
+    LAN_IP="${CERT_LAN_DEFAULT}"
+
+# Create the nginx self-signed certificate.
+[ "${CREATE}" = "1" ] && [ ! -d "${CERT_DIR}" ] && \
+    /bin/mkdir "${CERT_DIR}"
+[ "${CREATE}" = "1" ] && [ ! -f "${CERT_KEY_FILE}" ] && \
+    echo "Creating the certificate key..." && \
+    /usr/bin/openssl genrsa -out "${CERT_KEY_FILE}" 2048
+[ "${CREATE}" = "1" ] && [ "${FORCE}" = "1" ] && [ -f "${CERT_FILE}" ] && \
+    /bin/rm -f "${CERT_FILE}"
+[ "${CREATE}" = "1" ] && [ ! -f "${CERT_FILE}" ] && \
+    echo "Creating the nginx self-signed certificate..." && \
+    /usr/bin/openssl req -new -x509 -days 365 \
+    -subj "/C=${CERT_C}/ST=${CERT_ST}/L=${CERT_L}/O=${CERT_O}/emailAddress=${CERT_EA}/CN=${CERT_CN}" \
+    -addext "subjectAltName=DNS:${CERT_CN},IP:${CERT_LOCALHOST},IP:${LAN_IP}" \
+    -key "${CERT_KEY_FILE}" -out "${CERT_FILE}"
+
+[ -n "${NGINX_RELOAD}" ] && [ "${NGINX_RELOAD}" = "1" ] && \
+    /usr/local/etc/rc.d/nginx reload
+
+exit 0

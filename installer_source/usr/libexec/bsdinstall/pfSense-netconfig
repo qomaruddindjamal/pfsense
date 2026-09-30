@@ -1,0 +1,941 @@
+#!/bin/sh
+#
+#
+# bsdinstall pfSense installation module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+BSDINSTALL_INC_PATH="/usr/libexec/bsdinstall"
+. "${BSDINSTALL_INC_PATH}/pfSense-common"
+
+#
+# Check the installer state and verify if the WAN and LAN are assigned.
+#
+nic_assigned() {
+
+	unset LAN_ASSIGNED
+	unset WAN_ASSIGNED
+	for state in $(state_get); do
+		case "${state}" in
+		"LAN-ASSIGNED")
+			LAN_ASSIGNED=1
+			;;
+		"WAN-ASSIGNED")
+			WAN_ASSIGNED=1
+			;;
+		esac
+	done
+
+	if [ "${LAN_ASSIGNED}" = 1 ] && [ "${WAN_ASSIGNED}" = 1 ]; then
+		return 0
+	fi
+
+	return 1
+}
+
+netopts_pppoe_build() {
+	local _cif
+
+	unset NETOPTS
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+	_cif="${1}"
+	[ "${_cif}" != "WAN" ] && \
+	    return 0
+
+	NETOPTS="'U PPPoE User' \"${PPPoE_USER}\" 'PPPoE - User for authentication' \
+'P PPPoE Password' \"${PPPoE_PASS}\" 'PPPoE - Password for authentication' \
+'S PPPoE Service Name' \"${PPPoE_SERVICE}\" 'PPPoE - Service Name' \
+'N PPPoE Null Service Name' \"${PPPoE_NULL_SERVICE}\" 'PPPoE - Configure a Blank Service Name'"
+
+	return 0
+}
+
+netopts_static_build() {
+	local _cif
+
+	unset NETOPTS
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+	_cif="${1}"
+
+	if [ "${_cif}" = "LAN" ]; then
+		NETOPTS="'I IP Address' \"${IPADDR}\" 'Interface IP Address' \
+'D DHCPD Enabled' \"${DHCPD}\" 'DHCPD Enabled/Disabled'"
+		if [ "${DHCPD}" = "true" ]; then
+			NETOPTS="${NETOPTS} \
+'S DHCPD Range Start' \"${START}\" 'DHCPD Range Start' \
+'E DHCPD Range End' \"${END}\" 'DHCPD Range End'"
+		fi
+	else
+		NETOPTS="'I IP Address' \"${IPADDR}\" 'Interface IP Address' \
+'G Default Gateway' \"${GATEWAY}\" 'Interface Default Gateway' \
+'D DNS Server' \"${DNS}\" 'DNS Server'"
+	fi
+
+	return 0
+}
+
+netopts_build() {
+	local _mode _cif
+
+	unset NETOPTS
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_mode="${1}"
+	_cif="${2}"
+
+	if [ -n "${_mode}" ] && [ "${_mode}" = "STATIC" ]; then
+		if ! netopts_static_build "${_cif}"; then
+			return 1
+		fi
+	elif [ -n "${_mode}" ] && [ "${_mode}" = "PPPoE" ]; then
+		netopts_pppoe_build "${_cif}"
+	fi
+	if [ "${_cif}" = "WAN" ]; then
+		NETOPTS="${NETOPTS} \
+'U Use local resolver' \"${UNBOUND_LOCAL}\" 'Use the local DNS resolver (unbound)'"
+	fi
+
+	return 0
+}
+
+nic_mode_setup() {
+	local _cif	# Uppercase if name
+	local _if	# if name
+	local _IF	# OS NIC name
+	[ "${#}" -lt 2 ] && return 1
+	_if="${1}"
+	_IF="${2}"
+	[ "${#}" -eq 3 ] && _cif="${3}"
+
+	if [ "${_cif}" = "LAN" ]; then
+		MODE="$(nic_mode_get "lan")"
+		IPADDR="$(nic_ip_get "lan")"
+		DHCPD="$(nic_dhcpd_enable_get "lan")"
+		START="$(nic_dhcpd_get "lan" "start")"
+		END="$(nic_dhcpd_get "lan" "end")"
+		MODE_HELP="DHCP (client) / STATIC"
+	else
+		MODE="$(nic_mode_get "wan")"
+		IPADDR="$(nic_ip_get "wan")"
+		GATEWAY="$(nic_gw_get "wan")"
+		DNS="$(nic_dns_get "wan")"
+		PPPoE_USER="$(nic_pppoe_user_get "wan")"
+		PPPoE_PASS="$(nic_pppoe_pass_get "wan")"
+		PPPoE_SERVICE="$(nic_pppoe_svc_get "wan")"
+		PPPoE_NULL_SERVICE="$(nic_pppoe_null_svc_get "wan")"
+		MODE_HELP="DHCP (client) / STATIC / PPPoE"
+		UNBOUND_LOCAL="$(nic_unbound_local_get "wan")"
+	fi
+	[ "${MODE}" = "DHCP" ] && \
+	    MODE="DHCP (client)"
+
+	netopts_build "${MODE}" "${_cif}"
+
+	while [ 1 ]; do
+		if [ "${_cif}" = "LAN" ]; then
+			VLAN="$(nic_vlan_get "lan")"
+			PCP="$(nic_vlan_pcp_get "lan")"
+		else
+			VLAN="$(nic_vlan_get "wan")"
+			PCP="$(nic_vlan_pcp_get "wan")"
+		fi
+		if [ -n "${VLAN}" ]; then
+			VLAN_HELP="VLAN Tagging enabled. Tag: $VLAN "
+			if [ -n "${PCP}" ] && [ "${PCP}" -gt 0 ]; then
+				VLAN_HELP="${VLAN_HELP}Priority: $PCP "
+			fi
+		else
+			VLAN_HELP="VLAN Tagging disabled"
+		fi
+
+		exec 3>&1
+		if [ -n "${NETOPTS}" ]; then
+			NICOPT="$(echo ${NETOPTS} | "${XARGS}" -o "${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) Network Mode Setup " --colors --item-help \
+			    --menu "\nAdjust the network operation mode for the ${_cif} (${_IF}) interface if necessary.\n" \
+			     0 0 0 \
+			    '>>> Continue' 'Proceed with the installation' 'Continue with the displayed settings' \
+			    'M Interface Mode' "${MODE}" "Set up the interface operation mode - ${MODE_HELP}" \
+			    'V VLAN Settings' "${VLAN_HELP}" 'Set up VLAN Tag and Priority Tag' \
+			    2>&1 1>&3)" || return 0
+		else
+			NICOPT="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) Network Mode Setup " --colors --item-help \
+			    --menu "\nAdjust the network operation mode for the ${_cif} (${_IF}) interface if necessary.\n" \
+			     0 0 0 \
+			    '>>> Continue' 'Proceed with the installation' 'Continue with the displayed settings' \
+			    'M Interface Mode' "${MODE}" "Set up the interface operation mode - ${MODE_HELP}" \
+			    'V VLAN Settings' "${VLAN_HELP}" 'Set up VLAN Tag and Priority Tag' \
+			    2>&1 1>&3)" || return 0
+		fi
+		exec 3>&-
+
+		case "${NICOPT}" in
+		"D DHCPD Enabled")
+			if [ "${DHCPD}" = "true" ]; then
+				DHCPD="false"
+			else
+				DHCPD="true"
+			fi
+			;;
+		"D DNS Server")
+			exec 3>&1
+			DNSNEW="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) DNS Server Setup " --colors \
+			    --inputbox "\nEnter the DNS Server address\n" \
+			    0 0 "${DNS}" 2>&1 1>&3)" || continue
+			exec 3>&-
+
+			if ! /usr/bin/getaddrinfo -n "${DNSNEW}"; then
+				errx "Warning!" \
+				    "\nInvalid address: ${DNSNEW}\n"
+				continue
+			fi
+
+			DNS="${DNSNEW}"
+			;;
+		"E DHCPD Range End")
+			exec 3>&1
+			ENDNEW="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) DHCPD Range End Setup " --colors \
+			    --inputbox "\nEnter the DHCPD pool range final address\n" \
+			    0 0 "${END}" 2>&1 1>&3)" || continue
+			exec 3>&-
+
+			if ! /usr/bin/getaddrinfo -n "${ENDNEW}"; then
+				errx "Warning!" \
+				    "\nInvalid address: ${ENDNEW}\n"
+				continue
+			fi
+
+			END="${ENDNEW}"
+			;;
+		"G Default Gateway")
+			exec 3>&1
+			GATEWAYNEW="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) Default Gateway Setup " --colors \
+			    --inputbox "\nEnter the Default Gateway Address\n" \
+			    0 0 "${GATEWAY}" 2>&1 1>&3)" || continue
+			exec 3>&-
+
+			if ! /usr/bin/getaddrinfo -n "${GATEWAYNEW}"; then
+				errx "Warning!" \
+				    "\nInvalid address: ${GATEWAYNEW}\n"
+				continue
+			fi
+
+			GATEWAY="${GATEWAYNEW}"
+			;;
+		"I IP Address")
+			exec 3>&1
+			IPNEW="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) IP Address Setup " --colors \
+			    --inputbox "\nEnter the interface IP Address\n" \
+			    0 0 "${IPADDR}" 2>&1 1>&3)" || continue
+			exec 3>&-
+
+			IP="$(echo "${IPNEW}" | "${CUT}" -f1 -d/)"
+			if ! /usr/bin/getaddrinfo -n "${IP}"; then
+				errx "Warning!" \
+				    "\nInvalid address: ${IP}\n"
+				continue
+			fi
+
+			IPADDR="${IPNEW}"
+			MASK="$(echo "${IPADDR}" | "${CUT}" -f2 -d/)"
+			[ "${MASK}" = "${IPADDR}" ] && \
+			    IPADDR="${IPADDR}/24"
+			;;
+		"M Interface Mode")
+			if [ "${MODE}" = "DHCP (client)" ]; then
+				MODE="STATIC"
+			elif [ "${_cif}" = "WAN" ] && [ "${MODE}" = "STATIC" ]; then
+				MODE="PPPoE"
+			else
+				MODE="DHCP (client)"
+			fi
+			;;
+		"N PPPoE Null Service Name")
+			if [ "${PPPoE_NULL_SERVICE}" = "true" ]; then
+				PPPoE_NULL_SERVICE="false"
+			else
+				PPPoE_NULL_SERVICE="true"
+				PPPoE_SERVICE=""
+			fi
+			;;
+		"P PPPoE Password")
+			exec 3>&1
+			PASSNEW="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) PPPoE User Password " --colors \
+			    --inputbox "\nEnter the PPPoE User Password\n" \
+			    0 0 "${PPPoE_PASS}" 2>&1 1>&3)" || continue
+			exec 3>&-
+			PPPoE_PASS="${PASSNEW}"
+			;;
+		"S DHCPD Range Start")
+			exec 3>&1
+			STARTNEW="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) DHCPD Range Start Setup " --colors \
+			    --inputbox "\nEnter the DHCPD pool range initial address\n" \
+			    0 0 "${START}" 2>&1 1>&3)" || continue
+			exec 3>&-
+
+			if ! /usr/bin/getaddrinfo -n "${STARTNEW}"; then
+				errx "Warning!" \
+				    "\nInvalid address: ${STARTNEW}\n"
+				continue
+			fi
+
+			START="${STARTNEW}"
+			;;
+		"S PPPoE Service Name")
+			exec 3>&1
+			SERVICENEW="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) PPPoE Service Name " --colors \
+			    --inputbox "\nEnter the PPPoE Service Name (usually be left empty)\n" \
+			    0 0 "${PPPoE_SERVICE}" 2>&1 1>&3)" || continue
+			exec 3>&-
+			if [ -n "${SERVICENEW}" ]; then
+				PPPoE_SERVICE="${SERVICENEW}"
+				PPPoE_NULL_SERVICE="false"
+			else
+				PPPoE_SERVICE=""
+				PPPoE_NULL_SERVICE="true"
+			fi
+			;;
+		"U PPPoE User")
+			exec 3>&1
+			USERNEW="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) PPPoE User Name " --colors \
+			    --inputbox "\nEnter the PPPoE User Name\n" \
+			    0 0 "${PPPoE_USER}" 2>&1 1>&3)" || continue
+			exec 3>&-
+			PPPoE_USER="${USERNEW}"
+			;;
+		"U Use local resolver")
+			if [ "${UNBOUND_LOCAL}" = "true" ]; then
+				UNBOUND_LOCAL="false"
+			else
+				UNBOUND_LOCAL="true"
+			fi
+			;;
+		"V VLAN Settings")
+			# Setup the NIC VLAN.
+			if ! nic_vlan_setup "${_if}" "${IF}" "${_cif}"; then
+				errx "Warning!" \
+				    "\nInvalid VLAN Settings.\n"
+			fi
+			;;
+		*)
+			if [ -n "${MODE}" ]; then
+				if [ "${MODE}" = "DHCP (client)" ]; then
+					M="DHCP"
+				else
+					M="${MODE}"
+				fi
+				if ! nic_mode_set "${_if}" "${M}"; then
+					errx "Warning!" \
+					    "\nCannot set interface mode: ${MODE}\n"
+					continue
+				fi
+			fi
+			if [ "${_cif}" = "WAN" ]; then
+				# Set the local unbound state.
+				if ! nic_unbound_local_set "${_if}" "${UNBOUND_LOCAL}"; then
+					errx "Warning!" \
+					    "\nCannot set the local unbound state on ${_cif} interface\n"
+					continue
+				fi
+			fi
+			if [ -n "${MODE}" ] && [ "${MODE}" = "DHCP (client)" ] && \
+			    [ "${_cif}" = "LAN" ]; then
+				# Disable the DHCPD.
+				if ! nic_dhcpd_enable "${_if}" "false"; then
+					errx "Warning!" \
+					    "\nCannot disable the DHCPD on ${_cif} interface\n"
+					continue
+				fi
+			elif [ -n "${MODE}" ] && [ "${MODE}" = "STATIC" ] && \
+			    [ "${_cif}" = "LAN" ]; then
+
+				if ! nic_addr_set "${_if}" "${IPADDR}"; then
+					errx "Warning!" \
+					    "\nCannot set ${_cif} interface IP address: ${IPADDR}\n"
+					continue
+				fi
+				if [ -n "${DHCPD}" ] && [ "${DHCPD}" = "true" ] && \
+				    [ -n "${START}" ] && [ -n "${END}" ]; then
+					# Enable the DHCPD on the LAN interface.
+					if ! nic_dhcpd_enable "${_if}" "true"; then
+						errx "Warning!" \
+						    "\nCannot set the DHCPD state on ${_cif} interface\n"
+						continue
+					fi
+					if ! nic_dhcpd_set "${_if}" "${START}" "${END}"; then
+						errx "Warning!" \
+						    "\nCannot set ${_cif} interface DHCPD Range: ${START}-${END}\n"
+						continue
+					fi
+				else
+					# Disable the DHCPD on the LAN interface.
+					if ! nic_dhcpd_enable "${_if}" "false"; then
+						errx "Warning!" \
+						    "\nCannot set the DHCPD state on ${_cif} interface\n"
+						continue
+					fi
+				fi
+			elif [ -n "${MODE}" ] && [ "${MODE}" = "STATIC" ] && \
+			    [ "${_cif}" = "WAN" ]; then
+				if ! nic_addr_set "${_if}" "${IPADDR}"; then
+					errx "Warning!" \
+					    "\nCannot set ${_cif} interface IP address: ${IPADDR}\n"
+					continue
+				fi
+				if ! nic_dns_set "${_if}" "${DNS}"; then
+					errx "Warning!" \
+					    "\nCannot set ${_cif} interface DNS Server: ${DNS}\n"
+					continue
+				fi
+				if ! nic_gw_set "${_if}" "${GATEWAY}"; then
+					errx "Warning!" \
+					    "\nCannot set ${_cif} interface Default Gateway: ${GATEWAY}\n"
+					continue
+				fi
+			elif [ -n "${MODE}" ] && [ "${MODE}" = "PPPoE" ] && \
+			    [ "${_cif}" = "WAN" ]; then
+				if [ -z "${PPPoE_USER}" ] || [ -z "${PPPoE_PASS}" ]; then
+					errx "Warning!" \
+					    "\nThe PPPoE User and Password must be set!\n"
+					continue
+				fi
+				if ! nic_pppoe_user_set "${_if}" "${PPPoE_USER}"; then
+					errx "Warning!" \
+					    "\nInvalid/Cannot set the PPPoE User: ${PPPoE_USER}\n"
+					continue
+				fi
+				if ! nic_pppoe_pass_set "${_if}" "${PPPoE_PASS}"; then
+					errx "Warning!" \
+					    "\nInvalid/Cannot set the PPPoE Password: ${PPPoE_PASS}\n"
+					continue
+				fi
+				if ! nic_pppoe_svc_set "${_if}" "${PPPoE_SERVICE}"; then
+					errx "Warning!" \
+					    "\nInvalid/Cannot set the PPPoE Service Name: ${PPPoE_SERVICE}\n"
+					continue
+				fi
+				if ! nic_pppoe_null_svc_set "${_if}" "${PPPoE_NULL_SERVICE}"; then
+					errx "Warning!" \
+					    "\nInvalid/Cannot set the PPPoE NULL Service: ${PPPoE_NULL_SERVICE}\n"
+					continue
+				fi
+			fi
+			break
+			;;
+		esac
+
+		netopts_build "${MODE}" "${_cif}"
+	done
+
+	return 0
+}
+
+#
+# NIC VLAN Setup
+#
+nic_vlan_setup() {
+	local _cif	# Uppercase if name
+	local _if	# if name
+	local _IF	# OS NIC name
+	[ "${#}" -lt 2 ] && return 1
+	_if="${1}"
+	_IF="${2}"
+	[ "${#}" -eq 3 ] && _cif="${3}"
+
+	if [ "${_cif}" = "LAN" ]; then
+		VLAN="$(nic_vlan_get "lan")"
+		PCP="$(nic_vlan_pcp_get "lan")"
+	else
+		VLAN="$(nic_vlan_get "wan")"
+		PCP="$(nic_vlan_pcp_get "wan")"
+	fi
+	if [ -n "${VLAN}" ]; then
+		ENABLED="YES"
+	else
+		ENABLED="NO"
+		VLAN="0"
+		PCP="0"
+	fi
+
+	while [ 1 ]; do
+		exec 3>&1
+		VLANOPT="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+		    --title " ${_cif} (${_IF}) VLAN Setup " --colors --item-help \
+		    --menu "\nAdjust the VLAN settings for the ${_cif} (${_IF}) interface if necessary.\n" \
+		     0 0 0 \
+		    '>>> Continue' 'Proceed with the installation' 'Continue with the displayed settings' \
+		    'E Enable VLAN' "${ENABLED}" 'Enable or disable the VLAN support' \
+		    'V VLAN Tag' "${VLAN}" 'Set the VLAN Tag (between 1 and 4094)' \
+		    'P Priority Tag' "${PCP}" 'Set the Priority Tag (between 0 and 7)' 2>&1 1>&3)" || return 1
+		exec 3>&-
+
+		case "${VLANOPT}" in
+		"E Enable VLAN")
+			if [ "${ENABLED}" = "NO" ]; then
+				ENABLED="YES"
+			else
+				ENABLED="NO"
+				VLAN="0"
+			fi
+			;;
+		"V VLAN Tag")
+			exec 3>&1
+			VLANNEW="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) VLAN Tag Setup " --colors \
+			    --inputbox "\nEnter the VLAN Tag (1-4094).\n" \
+			    0 0 "${VLAN}" 2>&1 1>&3)" || return 1
+			exec 3>&-
+			VLANNEW="$(echo -n "${VLANNEW}" | tr -d "[:alpha:]" | \
+			    tr -d "[:blank:]" | tr -d "[:special:]" | tr -d "[:punct:]")"
+			if [ -z "${VLANNEW}" ]; then
+				errx "Warning!" \
+				    "\nInvalid VLAN Tag!\n"
+				continue
+			fi
+			VLANNEW="$(echo -n "${VLANNEW}" | "${SED}" 's/^0*//')"
+			if [ -z "${VLANNEW}" ]; then
+				errx "Warning!" \
+				    "\nInvalid VLAN Tag!\n"
+				continue
+			fi
+			if [ "${VLANNEW}" -lt 0 ] || [ "${VLANNEW}" -gt 4094 ]; then
+				errx "Warning!" \
+				    "\nInvalid VLAN Tag (not in 1-4094 range): ${VLANNEW}.\n"
+				continue;
+			fi
+			VLAN="${VLANNEW}"
+			[ "${VLAN}" = "1" ] && VLAN="0"
+			[ "${VLAN}" = "0" ] && ENABLED="NO"
+			[ "${VLAN}" != "0" ] && ENABLED="YES"
+			;;
+		"P Priority Tag")
+			exec 3>&1
+			PCPNEW="$("${BSDDIALOG}" --backtitle "$(get_title)" \
+			    --title " ${_cif} (${_IF}) VLAN Priority Tag Setup " --colors \
+			    --inputbox "\nEnter the Priority Tag (0-7).\n" \
+			    0 0 "${PCP}" 2>&1 1>&3)" || return 1
+			exec 3>&-
+			PCPNEW="$(echo -n "${PCPNEW}" | tr -d "[:alpha:]" | \
+			    tr -d "[:blank:]" | tr -d "[:special:]" | tr -d "[:punct:]")"
+			if [ -z "${PCPNEW}" ]; then
+				errx "Warning!" \
+				    "\nInvalid Priority Tag!\n"
+				continue
+			fi
+			if [ "${PCPNEW}" != "0" ]; then
+				PCPNEW="$(echo -n "${PCPNEW}" | "${SED}" 's/^0*//')"
+				if [ -z "${PCPNEW}" ]; then
+					errx "Warning!" \
+					    "\nInvalid Priority Tag!\n"
+					continue
+				fi
+			fi
+			PCPN="$(printf "%d" "${PCPNEW}")"
+			if [ "${PCPN}" != "${PCPNEW}" ]; then
+				errx "Warning!" \
+				    "\nInvalid Priority Tag: ${PCPNEW}\n"
+				continue;
+			fi
+			if [ "${PCPNEW}" -lt 0 ] || [ "${PCPNEW}" -gt 7 ]; then
+				errx "Warning!" \
+				    "\nInvalid Priority Tag (not in 0-7 range): ${PCPNEW}\n"
+				continue
+			fi
+			PCP="${PCPNEW}"
+			;;
+		*)
+			break
+			;;
+		esac
+	done
+
+	[ "${ENABLED}" = "YES" ] && [ "${VLAN}" -lt 2 ] && \
+	    ENABLED="NO"
+
+	if ! nic_vlan_set "${_if}" "${VLAN}" "${PCP}"; then
+		errx "Warning!" \
+		    "\nCannot set VLAN.  Configuration not applied!\n"
+		return 1
+	fi
+
+	return 0
+}
+
+#
+# NIC assignment menu
+#
+nic_assign() {
+	local _cif _count _force _if
+	if [ "${#}" -lt 2 ] && [ "${#}" -gt 3 ]; then
+		return 1
+	fi
+	_count="${1}"
+	_if="${2}"
+	_force="0"
+	if [ "${#}" -eq 3 ]; then
+		_force="1"
+	fi
+
+	_cif="$(echo "${_if}" | tr "[a-z]" "[A-Z]")"
+
+	unset MENU_EXTRA
+	[ "${_cif}" = "LAN" ] && \
+	    MENU_EXTRA="--extra-button --extra-label Skip"
+
+	tmpfile="$(${MKTEMP})"
+	cat << EOF > "${tmpfile}"
+#!/bin/sh
+
+out="\${1}"
+if [ "\${#}" -ne 1 ]; then
+	exit 1
+fi
+
+"${BSDDIALOG}" --backtitle "$(get_title)" \
+    --title " ${_cif} Interface Assignment and Configuration " --colors \
+    --menu "\nPlease select the ${_cif} interface.\n" \
+    ${MENU_EXTRA} 0 0 0 \\
+EOF
+	I=0
+	unset IFOPTS
+	INFO="$(get_info)"
+	LANIF="$(nic_assigned_if "lan")"
+	VLANLAN="$(nic_vlan_get "lan")"
+	WANIF="$(nic_assigned_if "wan")"
+	VLANWAN="$(nic_vlan_get "wan")"
+	while [ "${I}" -lt "${_count}" ]; do
+		IF_NAME="$(json_read "${INFO}" ".nics[${I}].name")"
+		IF_MAC="$(json_read "${INFO}" ".nics[${I}].ether")"
+		IF_STATUS="$(json_read "${INFO}" ".nics[${I}].status")"
+
+		unset ASSIGNED_IF
+		if [ "${IF_NAME}" = "${LANIF}" ] || [ "${IF_NAME}" = "${WANIF}" ]; then
+			ASSIGNED_IF="1"
+		fi
+		if [ "${_force}" = "0" ] && [ "${ASSIGNED_IF}" = "1" ]; then
+			I=$(( ${I} + 1 ))
+			continue
+		fi
+
+		ASSIGNINFO=""
+		if [ "${_force}" = "1" ] && [ "${IF_NAME}" = "${LANIF}" ]; then
+			VLANASSIGN=""
+			[ -n "${VLANLAN}" ] && VLANASSIGN=" (vlan ${VLANLAN})"
+			ASSIGNINFO="${ASSIGNINFO} - LAN${VLANASSIGN}"
+		fi
+		if [ "${_force}" = "1" ] && [ "${IF_NAME}" = "${WANIF}" ]; then
+			VLANASSIGN=""
+			[ -n "${VLANWAN}" ] && VLANASSIGN=" (vlan ${VLANWAN})"
+			ASSIGNINFO="${ASSIGNINFO} - WAN${VLANASSIGN}"
+		fi
+
+		[ -z "${IFOPTS}" ] && [ "${_cif}" = "LAN" ] && \
+		    IFOPTS="\"None\"	\"Do not assign the ${_cif} interface\""
+		IFOPTS="${IFOPTS} \
+\"${IF_NAME}\"	\"${IF_NAME} ${IF_MAC} (${IF_STATUS})${ASSIGNINFO}\""
+
+		I=$(( ${I} + 1 ))
+	done
+
+	if [ -z "${IFOPTS}" ] && [ "${_if}" = "lan" ]; then
+		# The LAN assignment is not mandatory.
+		return 0
+	fi
+
+	if [ -z "${IFOPTS}" ]; then
+		errx "Warning!" \
+		    "\nCannot continue, no network interfaces.\n"
+		return 1
+	fi
+
+	echo -n ${IFOPTS} >> "${tmpfile}"
+	echo " \\" >> "${tmpfile}"
+	cat << EOF >> "${tmpfile}"
+	2> "\${out}"
+error="\${?}"
+
+exit "\${error}"
+EOF
+
+	outfile="$(${MKTEMP})"
+	sh "${tmpfile}" "${outfile}"
+	error="${?}"
+	"${RM}" -f "${tmpfile}" 2> /dev/null
+	if [ ! -f "${outfile}" ]; then
+		"${RM}" -f "${outfile}" 2> /dev/null
+		return 1
+	fi
+	IF="$(cat "${outfile}")"
+	"${RM}" -f "${outfile}" 2> /dev/null
+
+	case "${error}" in
+	0)
+		;;
+	1)
+		# Cancel
+		return 1
+		;;
+	3)
+		# Skip
+		return 0
+		;;
+	*)
+		# Cancel
+		return 1
+		;;
+	esac
+
+	if [ -z "${IF}" ]; then
+		return 1
+	fi
+
+	if [ "${IF}" != "None" ]; then
+		if ! nic_mode_setup "${_if}" "${IF}" "${_cif}"; then
+		    errx "Warning!" \
+			"\nInvalid NIC Settings.\n"
+		fi
+	fi
+
+	tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "${_if}=${IF}" \
+	    "${INSTALLER_URL}/nic-assign" > "${tmpfile}"; then
+		"${RM}" -f "${tmpfile}" 2> /dev/null
+		return 1
+	fi
+	result="$("${GREP}" -c "\"status\":\"ok\"" "${tmpfile}")"
+	"${RM}" -f "${tmpfile}" 2> /dev/null
+
+	if [ -z "${result}" ] || [ "${result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+nic_assign_loop() {
+	local _count
+	[ "${#}" -ne 1 ] && return 1
+	_count="${1}"
+
+	while [ 1 ]; do
+		if ! nic_assign "${_count}" "wan"; then
+			return 1
+		fi
+
+		if ! nic_assign "${_count}" "lan"; then
+			return 1
+		fi
+		return 0
+	done
+
+	return 0
+}
+
+assignment_confirm() {
+	local _model_desc _model_text
+
+	_model_desc="$(get_model_descr)"
+	_model_text=""
+	[ -n "${_model_desc}" ] && \
+	    [  "${_model_desc}" != "unknown hardware" ] && \
+	    _model_text="\nDetected: ${_model_desc}\n"
+	tmpfile="$(${MKTEMP})"
+	cat << EOF > "${tmpfile}"
+#!/bin/sh
+
+out="\${1}"
+if [ "\${#}" -ne 1 ]; then
+	exit 1
+fi
+
+"${BSDDIALOG}" --backtitle "$(get_title)" \
+    --title " Interface Assignment and Configuration " --colors \
+    --menu "${_model_text}\nPlease confirm the interface assignment to continue with the installation.\n" \
+    --extra-button --extra-label "Assign/Configure" 0 0 0 \
+    --ok-label "Continue" \\
+EOF
+
+	LANIF="$(nic_assigned_if "lan")"
+	VLANLAN="$(nic_vlan_get "lan")"
+	WANIF="$(nic_assigned_if "wan")"
+	VLANWAN="$(nic_vlan_get "wan")"
+	[ -n "${VLANLAN}" ] && VLANLAN="vlan ${VLANLAN}"
+	[ -n "${VLANWAN}" ] && VLANWAN="vlan ${VLANWAN}"
+	INFO="$(get_info)"
+	WANSTATE="$(nic_status "${INFO}" "${WANIF}")"
+	if [ -n "${LANIF}" ]; then
+		LANSTATE="$(nic_status "${INFO}" "${LANIF}")"
+	else
+		LANSTATE="not assigned"
+	fi
+	NICOPTS="\"LAN\" \"${LANIF} (${LANSTATE}) ${VLANLAN}\""
+	NICOPTS="${NICOPTS} \"WAN\" \"${WANIF} (${WANSTATE}) ${VLANWAN}\""
+
+	echo -n ${NICOPTS} >> "${tmpfile}"
+	cat << EOF >> "${tmpfile}"
+	2> "\${out}"
+error="\${?}"
+
+exit "\${error}"
+EOF
+
+	outfile="$(${MKTEMP})"
+	sh "${tmpfile}" "${outfile}"
+	error="${?}"
+	"${RM}" -f "${tmpfile}" 2> /dev/null
+	if [ ! -f "${outfile}" ]; then
+		"${RM}" -f "${outfile}" 2> /dev/null
+		return 1
+	fi
+	IF="$(cat "${outfile}")"
+	"${RM}" -f "${outfile}" 2> /dev/null
+
+	case "${error}" in
+	0)
+		;;
+	1)
+		# Cancel
+		return 1
+		;;
+	3)
+		# Assign interface
+		if [ -z "${IF}" ]; then
+			errx "Warning!" \
+			    "\nCannot continue, no network interface selected.\n"
+			return 1
+		fi
+		count="$(nic_count)"
+		if [ "${count}" = "0" ]; then
+			errx "Warning!" \
+			    "\nCannot continue, no network interfaces detected.\n"
+			return 1
+		fi
+		if ! nic_assign "${count}" "${IF}" "1"; then
+			return 1
+		fi
+		# restart
+		return 99
+		;;
+	*)
+		# Cancel
+		return 1
+		;;
+	esac
+
+	if [ -z "${IF}" ]; then
+		return 1
+	fi
+
+	if ! connectivity_check; then
+		errx "Warning!" \
+		    "\nCannot reach the Netgate Servers, please verify your network settings!\n"
+		return 99
+	fi
+
+	return 0
+}
+
+nic_status() {
+	local _info _name _count _I
+	[ "${#}" -ne 2 ] && return 1
+	_info="${1}"
+	_name="${2}"
+	_count="$(nic_count)"
+	_I=0
+	while [ "${_I}" -lt "${_count}" ]; do
+		IF_NAME="$(json_read "${_info}" ".nics[${_I}].name")"
+		IF_STATUS="$(json_read "${_info}" ".nics[${_I}].status")"
+		if [ "${_name}" != "${IF_NAME}" ]; then
+			_I=$(( ${_I} + 1 ))
+			continue
+		fi
+		echo -n "${IF_STATUS}"
+		return 0
+	done
+	echo -n "unknown"
+	return 0
+}
+
+main_loop() {
+
+	if ! nic_assigned; then
+		count="$(nic_count)"
+		if [ "${count}" = "0" ]; then
+			errx "Warning!" \
+			    "\nCannot continue, no network interfaces detected.\n"
+			trap "-" 1 2 15 EXIT
+			exit 1
+		fi
+
+		"${BSDDIALOG}" --colors --backtitle "$(get_title)" \
+		    --title " Network Installation " \
+		    --msgbox "\nSetting up the network to continue the installation.\n " 0 0
+
+		if ! nic_assign_loop "${count}"; then
+			errx "Warning!" \
+			    "\nCannot assign the network interface.\n"
+			trap "-" 1 2 15 EXIT
+			exit 1
+		fi
+	fi
+
+	# Ask the user to confirm the current settings.
+	while [ 1 ]; do
+		assignment_confirm
+		error="${?}"
+		case "${error}" in
+		99)
+			continue
+			;;
+		0)
+			break
+			;;
+		*)
+			errx "Warning!" \
+			    "\nCannot assign the network interface.\n"
+			trap "-" 1 2 15 EXIT
+			exit 1
+			;;
+		esac
+	done
+
+	return 0
+}
+
+#
+# Main
+#
+trap main_loop 1 2 15 EXIT
+
+main_loop
+
+trap "-" 1 2 15 EXIT
+
+exit 0

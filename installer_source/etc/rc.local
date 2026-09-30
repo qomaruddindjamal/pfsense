@@ -1,0 +1,53 @@
+#!/bin/sh
+# $FreeBSD$
+#
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# Copyright (c) 2022 Jessica Clarke <jrtc27@FreeBSD.org>
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+#
+
+if ! mdconfig -l | grep -q md3; then
+	mdconfig -a -u 3 -s 8m
+	newfs /dev/md3
+	mount /dev/md3 /mnt
+	tar -C /etc -cf - . | tar -C /mnt -xf -
+	sync; sync; sync
+	umount /mnt
+	mount /dev/md3 /etc
+fi
+
+# resolv.conf from DHCP ends up in here, so make sure the directory exists
+[ ! -d "/tmp/bsdinstall_etc" ] && mkdir /tmp/bsdinstall_etc
+
+[ ! -d /var/log/nginx ] && mkdir /var/log/nginx
+
+# Create the nginx self-signed certificate.
+/usr/local/libexec/installer/pfSense-cert -c
+
+INSTALLER_PID="$(/usr/bin/pgrep pfSense-installer)"
+[ -z "${INSTALLER_PID}" ] && \
+    /usr/local/bin/cgi-fcgi -start -connect 127.0.0.1:9000 /usr/local/sbin/pfSense-installer
+
+# Start the daemon used to manage the backend process.
+/usr/local/libexec/installer/pfSense-installerd.sh &

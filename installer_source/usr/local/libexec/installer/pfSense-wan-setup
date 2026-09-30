@@ -1,0 +1,293 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-wan-setup module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+
+mpd_write_config() {
+	local _if _pppoe_null_svc _pppoe_pass _pppoe_service _pppoe_svc
+	local _pppoe_user
+
+	[ "${#}" -lt 4 ] && \
+	    return 1
+	_if="${1}"
+	_pppoe_user="${2}"
+	_pppoe_pass="${3}"
+	_pppoe_null_svc="${4}"
+	_pppoe_service="${5}"
+
+	case "${_pppoe_null_svc}" in
+	[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee])
+		_pppoe_svc="
+	set pppoe service \"\""
+		;;
+	*)
+		if [ -n "${_pppoe_service}" ]; then
+			_pppoe_svc="
+	set pppoe service \"${_pppoe_service}\""
+		else
+			_pppoe_svc=""
+		fi
+		;;
+	esac
+
+	"${MKDIR}" -p "$(dirname "${MPD_CONF}")" 2> /dev/null
+	"${CAT}" > "${MPD_CONF}" <<EOF
+startup:
+	# configure the console
+	set console close
+	# configure the web server
+	set web close
+
+default:
+pppoeclient:
+	create bundle static wan
+	set bundle period 6
+	set bundle lowat 0
+	set bundle hiwat 0
+	set bundle min-con 3
+	set bundle min-dis 6
+	set bundle enable bw-manage
+	set bundle enable ipv6cp
+	set iface name pppoe0
+	set iface description "WAN"
+	set iface disable on-demand
+	set iface idle 0
+	set iface enable tcpmssfix
+	set iface up-script /usr/local/libexec/installer/pfSense-pppoe-linkup
+	set iface down-script /usr/local/libexec/installer/pfSense-pppoe-linkdown
+	set ipcp ranges 0.0.0.0/0 0.0.0.0/0
+	#log -bund -ccp -chat -iface -ipcp -lcp -link
+
+	create link static wan_link0 pppoe
+	set link action bundle wan
+	set link disable multilink
+	set link keep-alive 10 60
+	set link max-redial 0
+	set link disable chap pap
+	set link accept chap pap eap
+	set link disable incoming
+	set link mtu 1492
+	set auth authname "${_pppoe_user}"
+	set auth password ${_pppoe_pass}${_pppoe_svc}
+	set pppoe iface ${_if}
+	open
+EOF
+
+	return 0
+}
+
+unset DNS
+unset GW
+unset IF
+unset IP
+unset LOCAL_DNS
+unset MASK
+unset PPPoE_NULL_SVC
+unset PPPoE_PASS
+unset PPPoE_SERVICE
+unset PPPoE_USER
+unset TYPE
+unset VLAN
+unset VLAN_PCP
+
+while getopts di:p:D:G:I:M:N:P:S:T:U:V: opt; do
+	case "${opt}" in
+	d)
+		LOCAL_DNS=1
+		;;
+	i)
+		IF="${OPTARG}"
+		shift 2
+		;;
+	p)
+		VLAN_PCP="${OPTARG}"
+		shift 2
+		;;
+	D)
+		DNS="${OPTARG}"
+		shift 2
+		;;
+	G)
+		GW="${OPTARG}"
+		shift 2
+		;;
+	I)
+		IP="${OPTARG}"
+		shift 2
+		;;
+	M)
+		MASK="${OPTARG}"
+		shift 2
+		;;
+	N)
+		PPPoE_NULL_SVC="${OPTARG}"
+		shift 2
+		;;
+	P)
+		PPPoE_PASS="${OPTARG}"
+		shift 2
+		;;
+	S)
+		PPPoE_SERVICE="${OPTARG}"
+		shift 2
+		;;
+	T)
+		TYPE="${OPTARG}"
+		shift 2
+		;;
+	U)
+		PPPoE_USER="${OPTARG}"
+		shift 2
+		;;
+	V)
+		VLAN="${OPTARG}"
+		shift 2
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ -z "${IF}" ]; then
+	echo "Error: No interface name provided."
+	exit 1
+fi
+_if="$(if_name "${IF}" "${VLAN}")"
+# Create the VLAN interface if necessary.
+if [ -n "${_if}" ] && [ "${IF}" != "${_if}" ]; then
+	[ -z "${VLAN_PCP}" ] && \
+	    VLAN_PCP="0"
+	if ! /sbin/ifconfig "${_if}" create; then
+		echo "Warning: Cannot create VLAN ${_if}"
+	fi
+	if ! /sbin/ifconfig "${_if}" vlanpcp "${VLAN_PCP}"; then
+		echo "Warning: Cannot create VLAN ${_if}"
+	fi
+	if ! /sbin/ifconfig "${_if}" up; then
+		echo "Warning: Cannot set VLAN ${_if} UP"
+	fi
+	if ! /sbin/ifconfig "${IF}" up; then
+		echo "Warning: Cannot set VLAN parent ${IF} UP"
+	fi
+fi
+
+case "${TYPE}" in
+DHCP)
+	if [ -z "${_if}" ]; then
+		echo "Error: Invalid arguments for DHCP."
+		exit 1
+	fi
+	if ! /sbin/ifconfig "${_if}" up; then
+		echo "Error: Failed to set the ${_if} interface UP."
+		exit 1
+	fi
+	if ! dhclient_kill "${_if}"; then
+		echo "Warning: Failed to kill the ${_if} dhclient."
+	fi
+	if [ -n "{LOCAL_DNS}" ] && [ "${LOCAL_DNS}" = "1" ]; then
+		"${CAT}" > "${DHCLIENT_CONF}" <<EOF
+interface "${_if}" {
+	prepend domain-name-servers 127.0.0.1;
+}
+EOF
+	else
+		"${CAT}" /dev/null > "${DHCLIENT_CONF}"
+	fi
+	if ! /sbin/dhclient "${_if}"; then
+		echo "Error: Cannot start the dhclient."
+		exit 1
+	fi
+	;;
+PPPoE)
+	if [ -z "${PPPoE_USER}" ] || [ -z "${PPPoE_PASS}" ]; then
+		echo "Error: Invalid arguments for PPPoE."
+		exit 1
+	fi
+	case "${PPPoE_NULL_SVC}" in
+	[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee])
+		;;
+	*)
+		PPPoE_NULL_SVC="false"
+		;;
+	esac
+	if ! mpd_write_config "${_if}" "${PPPoE_USER}" "${PPPoE_PASS}" \
+	    "${PPPoE_NULL_SVC}" "${PPPoE_SERVICE}"; then
+		echo "Error: Failed to set up the mpd configuration file."
+		exit 1
+	fi
+	if ! /usr/local/sbin/mpd5 -b -k -d "$(dirname "${MPD_CONF}")" \
+	    -f "$(basename "${MPD_CONF}")" \
+	    -p "${MPD_PID}" -s ppp pppoeclient; then
+		echo "Error: Failed to start the MPD daemon."
+		exit 1
+	fi
+	;;
+STATIC)
+	if [ -z "${_if}" ] || \
+	    [ -z "${IP}" ] || \
+	    [ -z "${MASK}" ]; then
+		echo "Error: Invalid arguments for fixed IP."
+		exit 1
+	fi
+	dhclient_kill "${_if}"
+	if ! /sbin/ifconfig "${_if}" up; then
+		echo "Error: Failed to set the ${_if} interface UP."
+		exit 1
+	fi
+	if ! /sbin/ifconfig "${_if}" "${IP}" netmask "${MASK}"; then
+		echo "Error: Failed to set the WAN interface IP address."
+		echo "${_if}: ${IP}/${MASK}"
+		exit 1
+	fi
+	if [ -n "${GW}" ] && \
+	    ! "${ROUTE}" add default "${GW}"; then
+		echo "Error: Failed to set the WAN default router."
+		echo "${_if}: ${IP}/${MASK} -> ${GW}"
+		exit 1
+	fi
+	 # Remove the existing resolv.conf entries.
+	"${RESOLVCONF}" -d "${_if}"
+	NS="nameserver"
+	if [ -n "{LOCAL_DNS}" ] && [ "${LOCAL_DNS}" = "1" ]; then
+		NS="${NS} 127.0.0.1"
+	fi
+	if [ -n "${DNS}" ]; then
+		NS="${NS} ${DNS}"
+	fi
+	if [ "${NS}" != "nameserver" ]; then
+		RETRY=1
+		DHCPC="$(/usr/bin/pgrep dhclient)"
+		while [ -n "${DHCPC}" ] && [ "${RETRY}" -lt 120 ]; do
+			sleep 1
+			RETRY=$(( ${RETRY} + 1 ))
+			DHCPC="$(/usr/bin/pgrep dhclient)"
+		done
+		echo "${NS}" | "${RESOLVCONF}" -a "${_if}"
+	fi
+	;;
+*)
+	echo "Error: Invalid WAN type."
+	exit 1
+	;;
+esac
+
+exit 0

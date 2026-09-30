@@ -1,0 +1,83 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-init module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+init_1100() {
+	/sbin/etherswitchcfg config vlan_mode dot1q
+	/sbin/etherswitchcfg vlangroup0 vlan 1 members 0
+	/sbin/etherswitchcfg vlangroup1 vlan 4090 members 0t,3
+	/sbin/etherswitchcfg vlangroup2 vlan 4091 members 0t,2
+	/sbin/etherswitchcfg port0 forwarding
+	/sbin/etherswitchcfg port2 forwarding pvid 4091
+	/sbin/etherswitchcfg port3 forwarding pvid 4090
+}
+
+init_5100() {
+	/sbin/kldload sg5100
+}
+
+init_7100() {
+	/sbin/etherswitchcfg config vlan_mode dot1q
+	/sbin/etherswitchcfg vlangroup0 vlan 1 members 0
+	/sbin/etherswitchcfg vlangroup1 vlan 4090 members 9t,10t,1
+	/sbin/etherswitchcfg vlangroup2 vlan 4091 members 9t,10t,2,3,4,5,6,7,8
+	/sbin/etherswitchcfg port1 forwarding pvid 4090
+	I=2
+	while [ "${I}" -le 8 ]; do
+		/sbin/etherswitchcfg "port${I}" forwarding pvid 4091
+		I=$(( "${I}" + 1 ))
+	done
+	/sbin/etherswitchcfg port9 forwarding
+	/sbin/etherswitchcfg port10 forwarding
+}
+
+init_cordoba() {
+	/sbin/kldload gpiobus gpioled cordbuc
+}
+
+unset MODEL
+
+while getopts M: opt; do
+	case "${opt}" in
+	M)
+		MODEL="${OPTARG}"
+		shift 2
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+case "${MODEL}" in
+"1100")
+	init_1100
+	;;
+"4100"|"6100"|"6200"|"8200")
+	init_cordoba
+	;;
+"5100")
+	init_5100
+	;;
+"7100")
+	init_7100
+	;;
+esac
+
+exit 0

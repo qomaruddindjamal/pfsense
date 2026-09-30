@@ -1,0 +1,205 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-pf module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+
+pf_conf_load() {
+	local _tmpfile _lan _lan_if _nat _nat_en _pass_int _wan
+
+	while getopts l:w:N opt; do
+		case "${opt}" in
+		l)
+			_lan="${OPTARG}"
+			shift 2
+			;;
+		w)
+			_wan="${OPTARG}"
+			shift 2
+			;;
+		N)
+			_nat_en=1
+			shift
+			;;
+		*)
+			echo "Warning: pf_conf_load: Invalid arguments."
+			return 1
+		esac
+	done
+
+	if [ -z "${_wan}" ]; then
+		echo "Warning: pf_conf_load: No WAN interface."
+		return 1
+	fi
+	if [ -n "${_lan}" ]; then
+		_lan_if="int_if=\"${_lan}\""
+		_pass_int="pass quick on \$int_if no state"
+		_spoof="antispoof quick for { lo \$int_if }"
+	else
+		_lan_if=""
+		_pass_int=""
+		_spoof="antispoof quick for { lo }"
+	fi
+	if [ -n "${_nat_en}" ] && [ "${_nat_en}" = "1" ]; then
+		_nat="nat on \$ext_if inet from !(\$ext_if) -> (\$ext_if:0)"
+	else
+		_nat=""
+	fi
+	_tmpfile="$("${MKTEMP}")"
+	"${CAT}" << EOF > "${_tmpfile}"
+ext_if="${_wan}"
+${_lan_if}
+
+set skip on lo
+
+scrub in
+
+${_nat}
+
+block in
+pass out
+
+${_pass_int}
+${_spoof}
+
+pass in on \$ext_if inet proto icmp from any to (\$ext_if) icmp-type { unreach, redir, timex }
+EOF
+
+	if ! "${PFCTL}" -f "${_tmpfile}"; then
+		echo "Warning: Cannot write the pf.conf rules."
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	return 0
+}
+
+pf_enable() {
+	if ! "${PFCTL}" -e; then
+		echo "Warning: Cannot enable the pf firewall."
+		return 1
+	fi
+	return 0
+}
+
+pf_disable() {
+	if ! "${PFCTL}" -d; then
+		echo "Warning: Cannot disable the pf firewall."
+		return 1
+	fi
+	return 0
+}
+
+#
+# Main
+#
+
+unset DISABLE
+unset ENABLE
+unset LAN
+unset LAN_VLAN
+unset NAT_EN
+unset WAN
+unset WAN_VLAN
+
+while getopts del:v:w:NV: opt; do
+	case "${opt}" in
+	d)
+		DISABLE=1
+		shift
+		;;
+	e)
+		ENABLE=1
+		shift
+		;;
+	l)
+		LAN="${OPTARG}"
+		shift 2
+		;;
+	v)
+		LAN_VLAN="${OPTARG}"
+		shift 2
+		TMP="$(printf "%d" "${LAN_VLAN}")"
+		if [ "${LAN_VLAN}" != "${TMP}" ] || \
+		    [ "${LAN_VLAN}" -lt 1 ] || \
+		    [ "${LAN_VLAN}" -gt 4095 ]; then
+			echo "Error: Invalid LAN VLAN Tag: ${LAN_VLAN}"
+			exit 1
+		fi
+		;;
+	w)
+		WAN="${OPTARG}"
+		shift 2
+		;;
+	N)
+		NAT_EN="-N"
+		shift
+		;;
+	V)
+		WAN_VLAN="${OPTARG}"
+		shift 2
+		TMP="$(printf "%d" "${WAN_VLAN}")"
+		if [ "${WAN_VLAN}" != "${TMP}" ] || \
+		    [ "${WAN_VLAN}" -lt 1 ] || \
+		    [ "${WAN_VLAN}" -gt 4095 ]; then
+			echo "Error: Invalid WAN VLAN Tag: ${WAN_VLAN}"
+			exit 1
+		fi
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ -n "${LAN}" ]; then
+	if [ -n "${LAN_VLAN}" ]; then
+		_lan="$(if_name "${LAN}" "${LAN_VLAN}")"
+	else
+		_lan="${LAN}"
+	fi
+	LAN_ARG="-l ${_lan}"
+else
+	LAN_ARG=""
+fi
+
+if [ -n "${WAN}" ]; then
+	if [ -n "${WAN_VLAN}" ]; then
+		_wan="$(if_name "${WAN}" "${WAN_VLAN}")"
+	else
+		_wan="${WAN}"
+	fi
+
+	# Create and load the pf.conf
+	if ! pf_conf_load -w "${_wan}" ${LAN_ARG} ${NAT_EN}; then
+		exit 1
+	fi
+fi
+
+# Set the require pf state.
+if [ -n "${ENABLE}" ] && [ "${ENABLE}" = "1" ]; then
+	pf_enable
+elif [ -n "${DISABLE}" ] && [ "${DISABLE}" = "1" ]; then
+	pf_disable
+fi
+
+exit 0

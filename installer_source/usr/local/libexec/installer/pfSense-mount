@@ -1,0 +1,200 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-mount module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+mount_aarch64_ufs_gpt_part() {
+	local _dev _chroot
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_dev="${1}"
+	_chroot="${2}"
+
+	if ! /sbin/mount "/dev/${_dev}p3" "${_chroot}"; then
+		return 1
+	fi
+
+	return 0
+}
+
+mount_amd64_ufs_gpt_part() {
+	local _dev _chroot
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_dev="${1}"
+	_chroot="${2}"
+
+	if ! /sbin/mount "/dev/${_dev}p4" "${_chroot}"; then
+		return 1
+	fi
+
+	return 0
+}
+
+mount_aarch64_ufs_mbr_part() {
+	local _dev _chroot
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_dev="${1}"
+	_chroot="${2}"
+
+	if ! /sbin/mount "/dev/${_dev}s3a" "${_chroot}"; then
+		return 1
+	fi
+
+	return 0
+}
+
+mount_amd64_ufs_mbr_part() {
+	local _dev _chroot
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_dev="${1}"
+	_chroot="${2}"
+
+	if ! /sbin/mount "/dev/${_dev}s2a" "${_chroot}"; then
+		return 1
+	fi
+
+	return 0
+}
+
+mount_ufs_gpt_part() {
+	local _dev _chroot
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_dev="${1}"
+	_chroot="${2}"
+
+	case "${ARCH}" in
+	aarch64)
+		mount_aarch64_ufs_gpt_part "${_dev}" "${_chroot}"
+		return $?
+		;;
+	amd64)
+		mount_amd64_ufs_gpt_part "${_dev}" "${_chroot}"
+		return $?
+		;;
+	esac
+
+	return 1
+}
+
+mount_ufs_mbr_part() {
+	local _dev _chroot
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_dev="${1}"
+	_chroot="${2}"
+
+	case "${ARCH}" in
+	aarch64)
+		mount_aarch64_ufs_mbr_part "${_dev}" "${_chroot}"
+		return $?
+		;;
+	amd64)
+		mount_amd64_ufs_mbr_part "${_dev}" "${_chroot}"
+		return $?
+		;;
+	esac
+}
+
+mount_ufs_part() {
+	local _scheme _dev _chroot
+	[ "${#}" -ne 3 ] && \
+	    return 1
+	_scheme="${1}"
+	_dev="${2}"
+	_chroot="${3}"
+
+	case "${_scheme}" in
+	GPT)
+		mount_ufs_gpt_part "${_dev}" "${_chroot}"
+		return $?
+		;;
+	MBR)
+		mount_ufs_mbr_part "${_dev}" "${_chroot}"
+		return $?
+		;;
+	esac
+
+	return 1
+}
+
+usage() {
+	cat << EOD >&2
+invalid parameters.
+
+Usage:
+${0} <FSTYPE> <SCHEME> <mount-point> <from>
+
+Where:
+FSTYPE:	UFS / ZFS
+SCHEME:	GPT / MBR
+
+EOD
+}
+
+if [ "${#}" -lt 3 ]; then
+	usage
+	exit 1
+fi
+
+unset FROM
+FSTYPE="${1}"
+SCHEME="${2}"
+MOUNTP="${3}"
+
+if [ "${FSTYPE}" != "UFS" ] && [ "${FSTYPE}" != "ZFS" ]; then
+	echo "Error: Invalid FSTYPE: ${FSTYPE}"
+	exit 1
+fi
+
+if [ "${SCHEME}" != "GPT" ] && [ "${SCHEME}" != "MBR" ]; then
+	echo "Error: Invalid SCHEME: ${SCHEME}"
+	exit 1
+fi
+
+if [ "${FSTYPE}" = "UFS" ]; then
+	if [ "${#}" -lt 4 ]; then
+		usage
+		exit 1
+	fi
+	FROM="${4}"
+fi
+
+ARCH="$(/usr/bin/uname -p)"
+case "${FSTYPE}" in
+UFS)
+	/bin/mkdir -p "${MOUNTP}"
+	if ! mount_ufs_part "${SCHEME}" "${FROM}" "${MOUNTP}"; then
+		echo "Error: Failed to mount the UFS file system."
+		exit 1
+	fi
+	;;
+ZFS)
+	;;
+esac
+
+# Mount the chroot /dev
+if [ ! -d "${MOUNTP}/dev" ]; then
+	/bin/mkdir -p "${MOUNTP}/dev"
+fi
+/sbin/mount -t devfs devfs "${MOUNTP}/dev"
+
+exit 0

@@ -1,0 +1,611 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-post-install module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+
+BOOT_CONFIG="/boot.config"
+DTB_FILES="armada-3720-netgate-1100.dtb armada-3720-netgate-2100.dtb"
+DTB_LABEL_PATH="/dev/msdosfs/DTBFAT0"
+DTB_MNT_PATH="/boot/dtb-boot"
+EFI_LABEL="EFISYS"
+EFI_MNT_PATH="/boot/efi"
+FSTAB="/etc/fstab"      
+LOADER_CONF="/boot/loader.conf"
+INITIAL_FILES="/usr/local/share/${PRODUCT}/initial.txz"
+
+serial_setup() {
+	local _comconsole _destdir _loaderconf _type
+
+	_loaderconf="${_destdir}${LOADER_CONF}"
+	while getopts d:t: opt; do
+		case "${opt}" in
+		"d")
+			_destdir="${OPTARG}"
+			shift 2
+			;;
+		"t")
+			_type="${OPTARG}"
+			shift 2
+			case "${_type}" in
+			"efi"|"serial"|"serial-only")
+				;;
+			*)
+				echo "Invalid serial type: ${_type}"
+				return 1
+			esac
+			;;
+		esac
+	done
+
+	if [ -z "${_destdir}" ] || [ -z "${_type}" ]; then
+		return 1
+	fi
+
+	if [ "${ARCH}" = "arm64" ]; then
+		/bin/cat << EOF >> "${_loaderconf}"
+boot_serial="YES"
+comconsole_speed="115200"
+EOF
+	else
+		case "${_type}" in
+		"efi")
+			_comconsole="efi"
+			;;
+		"serial"|"serial-only")
+			_comconsole="comconsole"
+			;;
+		esac
+
+		/bin/cat << EOF >> "${_loaderconf}"
+boot_serial="YES"
+console="${_comconsole}"
+comconsole_speed="115200"
+EOF
+	fi
+
+	# Activate the loader dual console.
+	if [ "${_type}" = "efi" ] && [ "${ARCH}" = "arm64" ]; then
+		echo "-S115200" >> "${_destdir}${BOOT_CONFIG}"
+	elif [ "${_type}" = "serial-only" ]; then
+		echo "-S115200 -h" >> "${_destdir}${BOOT_CONFIG}"
+	else
+		echo "-S115200 -D" >> "${_destdir}${BOOT_CONFIG}"
+	fi
+
+	# Force the serial console in pfSense.
+	/usr/bin/touch "${_destdir}/cf/conf/enableserial_force"
+
+	/usr/local/bin/xml ed -L -P -d "pfSense/system/serialspeed" \
+	    "${_destdir}/cf/conf/config.xml"
+	/usr/local/bin/xml ed -L -P -s "pfSense/system" -t elem \
+	    -n "serialspeed" -v "115200" "${_destdir}/cf/conf/config.xml"
+	/usr/local/bin/xml ed -L -P -d "pfSense/system/enableserial" \
+	    "${_destdir}/cf/conf/config.xml"
+	/usr/local/bin/xml ed -L -P -s "pfSense/system" -t elem \
+	    -n "enableserial" "${_destdir}/cf/conf/config.xml"
+
+	# Format
+	/usr/local/bin/xml fo -t "${_destdir}/cf/conf/config.xml" > \
+	    "${_destdir}/cf/conf/config.xml.tmp"
+	/bin/mv "${_destdir}/cf/conf/config.xml.tmp" \
+	    "${_destdir}/cf/conf/config.xml"
+
+	return 0
+}
+
+ufs_get_dev() {
+	local _scheme _disk _dev
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+
+	_scheme="${1}"
+	_disk="${2}"
+	_dev=""
+	case "${ARCH}" in
+	"arm64")
+		case "${_scheme}" in
+		"GPT")
+			_dev="${_disk}p3"
+			;;
+		"MBR")
+			_dev="${_disk}s3a"
+			;;
+		esac
+		;;
+	"amd64")
+		case "${_scheme}" in
+		"GPT")
+			_dev="${_disk}p4"
+			;;
+		"MBR")
+			_dev="${_disk}s2a"
+			;;
+		esac
+		;;
+	esac
+
+	echo -n "${_dev}"
+	return 0
+}
+
+config_dtb() {
+	local _destdir _dtb_dev _dtb_label _dtb_mnt _fstab
+
+	[ "${#}" -ne 5 ] && \
+	    return 1
+
+	_destdir="${1}"
+	_dtb_dev="${2}"
+	_dtb_label="${3}"
+	_dtb_mnt="${4}"
+	_fstab="${5}"
+
+	[ "${ARCH}" != "arm64" ] && \
+	    return 0
+
+	# Create the DTB boot mount point
+	if [ ! -d "${_destdir}${_dtb_mnt}" ]; then
+		if ! /bin/mkdir -p "${_destdir}${_dtb_mnt}"; then
+			return 1
+		fi
+	fi
+
+	# Add the partition to the fstab
+	if ! printf \
+	    "${_dtb_label}\t${_dtb_mnt}\tmsdosfs\trw,noatime,noauto\t0\t0\n" >> \
+	    "${_fstab}"; then
+		return 1
+	fi
+
+	if ! /sbin/mount_msdosfs "/dev/${_dtb_dev}" "${_destdir}${_dtb_mnt}"; then
+		return 1
+	fi
+
+	local _newdtb _olddtb
+	for _file in ${DTB_FILES}; do
+		if ! cp "${_destdir}/boot/dtb/netgate/${_file}" \
+		    "${_destdir}${_dtb_mnt}/"; then
+			return 1
+		fi
+		_newdtb="$(echo "${_file}" | /usr/bin/grep "\-netgate-")"
+		if [ -n "${_newdtb}" ]; then
+			_olddtb="$(echo "${_newdtb}" | sed 's/-netgate-/-sg/')"
+			if ! cp "${_destdir}/boot/dtb/netgate/${_file}" \
+			    "${_destdir}${_dtb_mnt}/${_olddtb}"; then
+				return 1
+			fi
+		fi
+	done
+
+	sync && sync
+	"${UMOUNT}" "${_destdir}${_dtb_mnt}"
+
+	return 0
+}
+
+config_esp() {
+	local _destdir _efi_mnt _boottype _arch _esp_dev _add_efi_boot
+	local _efi_entry_label
+
+	[ "${#}" -ne 6 ] && \
+	    return 1
+
+	_destdir="${1}"
+	_efi_mnt="${2}"
+	_boottype="${3}"
+	_arch="${4}"
+	_esp_dev="${5}"
+	_add_efi_boot="${6}"
+	_efi_entry_label="${PRODUCT}${PRODUCT_EXT}${PRODUCT_VER}"
+
+	# Create the EFI mount point
+	if [ ! -d "${_destdir}${_efi_mnt}" ]; then
+		if ! /bin/mkdir -p "${_destdir}${_efi_mnt}" 2> /dev/null; then
+			return 1
+		fi
+	fi
+
+	if ! /sbin/mount_msdosfs /dev/${_esp_dev} \
+	    "${_destdir}${_efi_mnt}"; then
+		return 1
+	fi
+
+	local _archbootname
+	_archbootname=""
+	case "${_arch}" in
+	    "arm64")
+		_archbootname="aa64"
+		;;
+	    "amd64")
+		_archbootname="x64"
+		;;
+            *)
+		"${UMOUNT}" "${_destdir}${_efi_mnt}"
+		return 1
+		;;
+	esac
+
+	local _efidir
+	_efidir="${_destdir}${_efi_mnt}/efi/"
+
+	# Some platforms have partial EFI implementations and don't permit us to
+	# configure a boot entry. We copy the loader both to the freebsd reserved
+	# path and to the architecture default path
+	local _bootdir _bootfile
+	for efisub in "boot" "freebsd"; do
+		_bootfile="boot${_archbootname}.efi"
+		if [ "${efisub}" == "freebsd" ]; then
+			_bootfile="loader.efi"
+		fi
+		_bootdir="${_efidir}${efisub}/"
+		if [ ! -d "${_bootdir}" ]; then
+			if ! /bin/mkdir -p "${_bootdir}"; then
+				"${UMOUNT}" "${_destdir}${_efi_mnt}"
+				return 1
+			fi
+		fi
+
+		if ! /bin/cp "${_destdir}/boot/loader.efi" "${_bootdir}${_bootfile}"; then
+			"${UMOUNT}" "${_destdir}${_efi_mnt}"
+			return 1
+		fi
+		echo "${_bootfile}" > "${_bootdir}startup.nsh"
+
+		# Only add efi boot entry for the freebsd reserved loader location
+		if [ ${_add_efi_boot} -eq 1 ] && [ "${efisub}" == "freebsd" ] && [ "${_boottype}" != "BIOS" ]  && [ "${_arch}" = "amd64" ]; then
+			# Remove any existing boot entries under the label
+			for entry in $(efibootmgr | "${AWK}" "\$NF == \"${_efi_entry_label}\" { sub(/.*Boot/,\"\", \$1); sub(/\*/,\"\", \$1); print \$1 }"); do
+				efibootmgr -B -b "${entry}" 2>&1 > /dev/null
+			done
+			# Add the new entry.
+			/usr/sbin/efibootmgr -c -a -L "${_efi_entry_label}" \
+			    -l "${_bootdir}${_bootfile}" 2>&1 > /dev/null
+		fi
+	done
+	sync && sync
+	"${UMOUNT}" "${_destdir}${_efi_mnt}"
+
+	return 0
+}
+
+create_fstab() {
+	local _destdir _fstype _scheme _boottype _arch _ndisks _disks _fstab
+	local _disk1
+
+	[ "${#}" -lt 6 ] && \
+	    return 1
+
+	_destdir="${1}"
+	_fstype="${2}"
+	_scheme="${3}"
+	_boottype="${4}"
+	_arch="${5}"
+	_ndisks="${6}"
+	shift 6
+
+	_disks="${@}"
+	_fstab="${_destdir}/etc/fstab"
+	_disk1=""
+	[ "${#}" -ge 1 ] && \
+	    _disk1="${1}"
+
+	if ! printf "# Device\tMountpoint\tFStype\tOptions\tDump\tPass#\n" > "${_fstab}"; then
+		return 1
+	fi
+
+	case "${_fstype}" in
+	"UFS")
+		if [ "${_ndisks}" -ne 1 ]; then
+			return 1
+		fi
+		disk="$(ufs_get_dev "${_scheme}" "${_disk1}")"
+		if [ -z "${disk}" ] || [ ! -c "/dev/${disk}" ]; then
+			return 1
+		fi
+		ufsid="$(/sbin/dumpfs -l "${disk}")"
+		if [ -z "${ufsid}" ]; then
+			return 1
+		fi
+		if ! printf "${ufsid}\t/\tufs\trw\t1\t1\n" >> "${_fstab}"; then
+			return 1
+		fi
+		;;
+	"ZFS")
+		;;
+	*)
+		return 1
+		;;
+	esac
+
+	#
+	# If the swap is enabled, add the swap partitions to the /etc/fstab.
+	# AMD64 only.
+	#
+	if [ -n "${SWAP_DISABLED}" ] || [ "${_arch}" != "amd64" ]; then
+		return 0
+	fi
+
+	local _disk _idx
+
+	_idx=1
+	for _disk in ${_disks}; do
+		if ! printf "/dev/gpt/swap${_idx}\tnone\tswap\tsw\t0\t0\n" >> "${_fstab}"; then
+			return 1
+		fi
+		_idx=$(( "${_idx}" + 1 ))
+	done
+
+	return 0
+}
+
+pfSense_post_install() {
+	local _arch _boottype _destdir _disks _fstab _fstype _model _ndisks
+	local _scheme
+
+	while getopts M: opt; do
+		case "${opt}" in
+		"M")
+			_model="${OPTARG}"
+			shift 2
+			;;
+		esac
+	done
+
+	[ "${#}" -lt 6 ] && \
+	    return 1
+
+	_destdir="${1}"
+	_fstype="${2}"
+	_scheme="${3}"
+	_boottype="${4}"
+	_arch="${5}"
+	_ndisks="${6}"
+	shift 6
+	_disks="${@}"
+	_fstab="${_destdir}/etc/fstab"
+
+	# Install the initial files.
+	if [ -f "${_destdir}${INITIAL_FILES}" ]; then
+		/usr/bin/tar -zx -C "${_destdir}" \
+		    -f "${_destdir}${INITIAL_FILES}" 2> /dev/null
+	elif [ -f "${INITIAL_FILES}" ]; then
+		/usr/bin/tar -zx -C "${_destdir}" \
+		    -f "${INITIAL_FILES}" 2> /dev/null
+	fi
+
+	# Trigger the initial setup wizard.
+	/usr/bin/touch "${_destdir}/cf/conf/trigger_initial_wizard" 2> /dev/null
+
+	# Create the system fstab.
+	if ! create_fstab "${_destdir}" "${_fstype}" "${_scheme}" \
+	    "${_boottype}" "${_arch}" "${_ndisks}" ${_disks}; then
+		return 1
+	fi
+
+	local _add_efi_boot _disk _p
+
+	# Configure the ESPs for the disk(s)
+	_p="p"
+	[ "${_scheme}" == "MBR" ] && \
+	    _p="s"
+	_add_efi_boot="1"	# Only add an efi boot entry for one ESP at this time
+	for _disk in ${_disks}; do
+		if ! config_esp "${_destdir}" "${EFI_MNT_PATH}" \
+		    "${_boottype}" "${_arch}" "${_disk}${_p}1" "${_add_efi_boot}"; then
+			return 1
+		fi
+		_add_efi_boot=0
+	done
+
+	if ! printf \
+	    "/dev/msdosfs/${EFI_LABEL}\t${EFI_MNT_PATH}\tmsdosfs\trw,noatime,noauto\t0\t0\n" >> \
+	    "${_fstab}"; then
+		return 1
+	fi
+
+	# Populate the DTB boot partition on aarch64
+	if [ "${ARCH}" = "arm64" ]; then
+		_p="p2"
+		[ "${_scheme}" == "MBR" ] && \
+		    _p="s1"
+		for _disk in ${_disks}; do
+			if ! config_dtb "${_destdir}" "${_disk}${_p}" \
+			    "${DTB_LABEL_PATH}" "${DTB_MNT_PATH}" "${_fstab}"; then
+				return 1
+			fi
+		done
+	fi
+
+	# Set the root password - force it to change.
+	echo "pfsense" | /usr/sbin/pw -R "${_destdir}" usermod root -h 0
+
+	# /etc/rc.conf
+	/usr/bin/touch "${_destdir}/etc/rc.conf"
+
+	# Create the /mnt on target disk (if not present).
+	[ ! -d "${_destdir}/mnt" ] && \
+	   /bin/mkdir "${_destdir}/mnt" 2> /dev/null
+
+	# Add the loader.conf settings.
+	/bin/cat << EOF > "${_destdir}${LOADER_CONF}"
+autoboot_delay="3"
+opensolaris_load="YES"
+zfs_load="YES"
+hw.hn.use_if_start="1"
+hw.hn.vf_transparent="0"
+kern.geom.label.disk_ident.enable="0"
+kern.geom.label.gptid.enable="0"
+kern.ipc.nmbclusters="1000000"
+kern.ipc.nmbjumbo9="524288"
+kern.ipc.nmbjumbop="524288"
+hw.e6000sw.default_disabled=1
+EOF
+	if [ -f "${_destdir}/boot/loader.conf.lua" ]; then
+		/bin/cat << EOF >> "${_destdir}${LOADER_CONF}"
+loader_conf_files="/boot/loader.conf.lua"
+EOF
+	fi
+
+	# Setup the legacy serial console if necessary.
+	[ -n "${SERIAL_CONSOLE}" ] && \
+	    serial_setup -d "${_destdir}" -t "${SERIAL_CONSOLE}"
+
+	# Update the u-boot on the 1100.
+	if [ -n "${_model}" ] && [ "${_model}" = "1100" ]; then
+		echo
+		/usr/local/share/u-boot/1100/u-boot-update.sh
+	fi
+
+	return 0
+}
+
+unset BOOTTYPE
+unset DESTDIR
+unset DISKS
+unset FSTYPE
+unset MODEL
+unset NDISKS
+unset PRODUCT_EXT
+unset PRODUCT_VER
+unset SCHEME
+unset SERIAL_CONSOLE
+unset SWAP_DISABLED
+unset ZFS_VOL_TYPE
+NDISKS=0
+while getopts d:p:s:wB:D:F:M:S:V: opt; do
+	case "${opt}" in
+	"d")
+		[ -n "${DISKS}" ] && \
+		    DISKS="${DISKS} "
+		DISKS="${DISKS}${OPTARG}"
+		NDISKS=$(( ${NDISKS} + 1 ))
+		shift 2
+		;;
+	"p")
+		PRODUCT_EXT="${OPTARG}"
+		shift 2
+		;;
+	"s")
+		SERIAL_CONSOLE="${OPTARG}"
+		shift 2
+		case "${SERIAL_CONSOLE}" in
+		"efi"|"serial"|"serial-only")
+			;;
+		*)
+			echo "Error: Invalid Console type: ${SERIAL_CONSOLE}"
+			exit 1
+			;;
+		esac
+		;;
+	"w")
+		SWAP_DISABLED="1"
+		shift
+		;;
+	"B")
+		BOOTTYPE="${OPTARG}"
+		case "${BOOTTYPE}" in
+		"BIOS"|"BIOS+UEFI"|"UEFI")
+			;;
+		*)
+			echo "Error: Invalid Boot type: ${BOOTTYPE}"
+			exit 1
+			;;
+		esac
+		shift 2
+		;;
+	"D")
+		DESTDIR="${OPTARG}"
+		shift 2
+		;;
+	"F")
+		FSTYPE="${OPTARG}"
+		case "${FSTYPE}" in
+		"UFS"|"ZFS")
+			;;
+		*)
+			echo "Error: Invalid FSTYPE: ${FSTYPE}"
+			exit 1
+			;;
+		esac
+		shift 2
+		;;
+	"M")
+		MODEL="${OPTARG}"
+		shift 2
+		;;
+	"S")
+		SCHEME="${OPTARG}"
+		case "${SCHEME}" in
+		"GPT"|"MBR")
+			;;
+		*)
+			echo "Error: Invalid SCHEME: ${SCHEME}"
+			exit 1
+			;;
+		esac
+		shift 2
+		;;
+	"V")
+		PRODUCT_VER=" \(${OPTARG}\)"
+		shift 2
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ "${NDISKS}" -lt 1 ] || [ "${NDISKS}" -gt 128 ]; then
+	echo "Error: Invalid disk count: ${NDISKS}"
+	exit 1
+fi
+
+if [ -z "${FSTYPE}" ]; then
+	echo "Error: Invalid paramenters - no file system type"
+	usage
+	exit 1
+fi
+
+if [ -z "${SCHEME}" ]; then
+	echo "Error: Invalid paramenters - no partition scheme"
+	usage
+	exit 1
+fi
+
+[ -z "${MODEL}" ] && \
+    MODEL="unknown"
+
+ARCH="$(uname -m)"
+
+# Final installation setup
+echo
+echo "pfSense Post Installation setup"
+if ! pfSense_post_install -M "${MODEL}" "${DESTDIR}" "${FSTYPE}" "${SCHEME}" \
+    "${BOOTTYPE}" "${ARCH}" "${NDISKS}" ${DISKS}; then
+	echo "Error: Failed to run the post installation script."
+	exit 1
+fi
+echo
+echo "pfSense Post Installation setup .. done."
+echo
+
+exit 0

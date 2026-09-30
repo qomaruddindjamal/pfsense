@@ -1,0 +1,225 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-repo-setup module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2015-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+usage() {
+	me=$(basename $0)
+        cat << EOD >&2
+Usage: $(basename "$0") [-hU]
+	-C		- chroot directory
+	-D		- pfSense repositories directory
+	-h		- this help text
+	-P		- Product name - "pfSense"
+	-r		- Repository name
+EOD
+}
+
+get_default_repo() {
+	local _pkg_repo_files="${CHROOT_DIR}${REPO_DIR}/pkg/repos/${REPO_BASE_NAME}-repo-"
+
+	unset first_repo
+	for file in $(/bin/ls "${_pkg_repo_files}"*.name); do
+		repo_path="${file%.name}"
+		if [ -f "${repo_path}.default" ]; then
+			echo "$(cat "${repo_path}.name")"
+			return
+		fi
+		if [ -z "${first_repo}" ]; then
+			first_repo="$(cat "${repo_path}.name")"
+		fi
+	done
+	# Default not found.  return the first repo.
+	if [ -n "${first_repo}" ]; then
+		echo "${first_repo}"
+	fi
+	# Nothing found.
+	echo ""
+}
+
+abi_setup() {
+	local _repo="${1}"
+	local _arch="$(uname -p)"
+	local _freebsd_version="$(uname -r)"
+	local _repo_conf_file="$(readlink ${CHROOT_DIR}${PFSENSE_REPO_CONF})"
+
+	CUR_ABI="FreeBSD:${_freebsd_version%%.*}:${_arch}"
+	CUR_ALTABI="freebsd:${_freebsd_version%%.*}"
+
+	if [ "${_arch}" = "armv6" ]; then
+		CUR_ALTABI="${CUR_ALTABI}:${_arch}:32:el:eabi:hardfp"
+	elif [ "${_arch}" = "armv7" ]; then
+		CUR_ALTABI="${CUR_ALTABI}:${_arch}:32:el:eabi:softfp"
+	elif [ "${_arch}" = "aarch64" ]; then
+		CUR_ALTABI="${CUR_ALTABI}:${_arch}:64"
+	elif [ "${_arch}" = "i386" ]; then
+		CUR_ALTABI="${CUR_ALTABI}:x86:32"
+	else
+		CUR_ALTABI="${CUR_ALTABI}:x86:64"
+	fi
+
+	if [ -f "${CHROOT_DIR}${_repo_conf_file%%.conf}.abi" ]; then
+		ABI=$(cat "${CHROOT_DIR}${_repo_conf_file%%.conf}.abi")
+	else
+		ABI=${CUR_ABI}
+	fi
+
+	if [ -f "${CHROOT_DIR}${_repo_conf_file%%.conf}.altabi" ]; then
+		ALTABI=$(cat "${CHROOT_DIR}${_repo_conf_file%%.conf}.altabi")
+	else
+		ALTABI=${CUR_ALTABI}
+	fi
+
+	# Make sure pkg.conf is set properly so GUI can work
+	cat << EOF > "${PKG_CONF}"
+ABI=${ABI}
+ALTABI=${ALTABI}
+EOF
+
+	PLUS_REPO_CONF="${REPO_DIR}/pkg/repos/${REPO_BASE_NAME}-repo-${_repo}.conf"
+	PLUS_CERT="${REPO_DIR}/pkg/repos/${REPO_BASE_NAME}-repo-${_repo}-cert.pem"
+	PLUS_KEY="${REPO_DIR}/pkg/repos/${REPO_BASE_NAME}-repo-${_repo}-key.pem"
+
+	if [ -f "${CHROOT_DIR}${AUTH_CA}" ] && \
+	    [ -f "${CHROOT_DIR}${PLUS_CERT}" ] && \
+	    [ -f "${CHROOT_DIR}${PLUS_KEY}" ]; then
+		cat << EOF >> "${PKG_CONF}"
+PKG_ENV {
+	SSL_CA_CERT_FILE=${AUTH_CA}
+	SSL_CLIENT_CERT_FILE=${PLUS_CERT}
+	SSL_CLIENT_KEY_FILE=${PLUS_KEY}
+}
+EOF
+	fi
+
+	return 0
+}
+
+pfSense_repo_setup() {
+	local _repo="${1}"
+
+	#
+	# Make sure the pfSense.conf points to the correct file.
+	#
+
+	# If pfSense.conf is not a link, remove it.
+	if [ -e "${CHROOT_DIR}${PFSENSE_REPO_CONF}" ] && \
+	    [ ! -L "${CHROOT_DIR}${PFSENSE_REPO_CONF}" ]; then
+		/bin/rm -f "${CHROOT_DIR}${PFSENSE_REPO_CONF}"
+	fi
+
+	local _PKG_CONF="$(readlink ${CHROOT_DIR}${PFSENSE_REPO_CONF})"
+	if [ -n "${_PKG_CONF}" ] && [ "${_PKG_CONF}" != "${PKG_REPO_CONF}" ]; then
+		/bin/rm -f "${CHROOT_DIR}${PFSENSE_REPO_CONF}"
+	fi
+	if [ -z "${_PKG_CONF}" ] || [ "${_PKG_CONF}" != "${PKG_REPO_CONF}" ]; then
+		/bin/mkdir -p $(dirname "${CHROOT_DIR}${PFSENSE_REPO_CONF}")
+		/bin/ln -sf "${PKG_REPO_CONF}" "${CHROOT_DIR}${PFSENSE_REPO_CONF}"
+	fi
+
+	# Copy the Netgate CA file.
+	if [ ! -f "${CHROOT_DIR}${AUTH_CA}" ]; then
+		/bin/mkdir -p "$(dirname "${CHROOT_DIR}${AUTH_CA}")"
+		/bin/cp -f "${AUTH_CA}" "${CHROOT_DIR}${AUTH_CA}"
+	fi
+
+	# Copy the pkg keys.
+	/bin/mkdir -p "${CHROOT_DIR}/usr/local/share/pfSense/keys/pkg/revoked"
+	/bin/mkdir -p "${CHROOT_DIR}/usr/local/share/pfSense/keys/pkg/trusted"
+	/bin/cp /usr/local/share/pfSense/keys/pkg/trusted/* \
+	    "${CHROOT_DIR}/usr/local/share/pfSense/keys/pkg/trusted/"
+
+	# Setup the repository settings.
+	abi_setup "${_repo}"
+
+	return 0
+}
+
+
+#
+# main()
+#
+
+while getopts C:D:hn:P:r: opt; do
+	case ${opt} in
+	C)
+		CHROOT_DIR="${OPTARG}"
+		;;
+	D)
+		REPO_DIR="${OPTARG}"
+		;;
+	h)
+		usage
+		exit 0
+		;;
+	n)
+		REPO_BASE_NAME="${OPTARG}"
+		;;
+	P)
+		PRODUCT="${OPTARG}"
+		;;
+	r)
+		REPO_NAME="${OPTARG}"
+		;;
+	*)
+		usage
+		exit 1
+		;;
+	esac
+done
+
+if [ -z "${REPO_DIR}" ]; then
+	usage
+	exit 1
+fi
+if [ -z "${PRODUCT}" ]; then
+	PRODUCT="pfSense"
+fi
+if [ -z "${REPO_BASE_NAME}" ]; then
+	REPO_BASE_NAME="${PRODUCT}"
+fi
+
+AUTH_CA="/etc/ssl/netgate-ca.pem"
+AUTH_CA_SRC="/usr/local/share/pfSense/ssl/netgate-ca.pem"
+PFSENSE_REPO_CONF="/usr/local/etc/pkg/repos/${PRODUCT}.conf"
+PKG_CONF="${CHROOT_DIR}/usr/local/etc/pkg.conf"
+
+# If no branch is passed, use the default repo.
+if [ -z "${REPO_NAME}" ]; then
+	REPO_NAME="$(get_default_repo)"
+fi
+
+PKG_REPO_CONF="${REPO_DIR}/pkg/repos/${REPO_BASE_NAME}-repo-${REPO_NAME}.conf"
+
+if [ ! -f "${CHROOT_DIR}${PKG_REPO_CONF}" ]; then
+	echo "Error: Repository configuration file not found."
+	exit 1
+fi
+if [ ! -f "${AUTH_CA_SRC}" ] && [ ! -f "${AUTH_CA}" ]; then
+	echo "Error: Netgate CA file not found."
+	exit 1
+fi
+if [ ! -f "${AUTH_CA}" ]; then
+	/bin/mkdir -p "$(dirname "${AUTH_CA}")"
+	/bin/cp "${AUTH_CA_SRC}" "${AUTH_CA}"
+fi
+
+# Fetch the repository data and setup the repository access.
+pfSense_repo_setup "${REPO_NAME}"
+
+exit 0

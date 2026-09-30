@@ -1,0 +1,63 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-umount module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+ZFS_POOL="pfSense"
+
+if [ "${#}" -ne 2 ]; then
+	cat << EOD >&2
+invalid parameters.
+
+Usage:
+${0} <FSTYPE> <mount-point>
+
+Where:
+FSTYPE:	UFS / ZFS
+
+EOD
+	exit 1
+fi
+
+FSTYPE="${1}"
+CHROOT="${2}"
+
+if [ "${FSTYPE}" != "UFS" ] && [ "${FSTYPE}" != "ZFS" ]; then
+	echo "Error: Invalid FSTYPE: ${FSTYPE}"
+	exit 1
+fi
+
+# umount the /dev inside the chroot if still mounted.
+/sbin/umount "${CHROOT}/dev" 2> /dev/null
+
+case "${FSTYPE}" in
+UFS)
+	if ! /sbin/umount -f "${CHROOT}"; then
+		echo "Error: Failed to umount the UFS file system."
+		exit 1
+	fi
+	;;
+ZFS)
+	if ! /sbin/zpool export "${ZFS_POOL}"; then
+		echo "Error: Failed to export the ZFS pool."
+		exit 1
+	fi
+	;;
+esac
+
+exit 0

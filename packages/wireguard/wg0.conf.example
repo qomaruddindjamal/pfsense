@@ -1,0 +1,14 @@
+[Interface]
+# IP Interface WireGuard di pfSense
+Address = 10.10.10.1/24
+ListenPort = 51820
+PrivateKey = <SERVER_PRIVATE_KEY>
+
+# Aturan Firewall PF / NAT untuk meneruskan trafik klien WireGuard ke Internet
+# PostUp = /sbin/pfctl -a "wireguard_nat" -f /usr/local/etc/wireguard/nat.rules
+# PostDown = /sbin/pfctl -a "wireguard_nat" -F all
+
+# --- Contoh Peer / Klien 1 ---
+[Peer]
+PublicKey = <CLIENT_PUBLIC_KEY>
+AllowedIPs = 10.10.10.2/32

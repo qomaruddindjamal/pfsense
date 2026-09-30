@@ -1,0 +1,127 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-unbound module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+
+unbound_write_config() {
+	local _ip _local_access _local_if _local_zone _maskbits _network
+	local _unbound_dir
+
+	[ "${#}" -ne 3 ] && \
+	    return 1
+	_ip="${1}"
+	_network="${2}"
+	_maskbits="${3}"
+	_unbound_dir="$(dirname "${UNBOUND_CONF}")"
+
+	/bin/mkdir -p "${_unbound_dir}"
+	if [ ! -f "${_unbound_dir}/unbound_server.key" ]; then
+		if !  /usr/local/sbin/unbound-control-setup -d "${_unbound_dir}"; then
+			echo "Error: Failed to create the unbound control certificates."
+			exit 1
+		fi
+	fi
+
+	if [ -n "${_ip}" ] && [ -n "${_maskbits}" ] && [ -n "${_network}" ]; then
+		_local_if="
+	interface: ${_ip}"
+		_local_access="
+	access-control: ${_network}/${_maskbits} allow
+	private-address: ${_network}/${_maskbits}"
+		_local_zone="
+local-zone: \"installer.pfsense.\" static
+	local-data: \"installer.pfsense. IN A ${_ip}\"
+	local-data-ptr: \"${_ip} installer.pfsense\""
+	else
+		_local_if=""
+		_local_access=""
+		_local_zone=""
+	fi
+	cat << EOF > "${UNBOUND_CONF}"
+server:
+	interface: 127.0.0.1${_local_if}
+	chroot: "/var/unbound"
+	directory: "/var/unbound/"
+	pidfile: "unbound.pid"
+
+	access-control: 127.0.0.1/32 allow_snoop
+	access-control: ::1 allow_snoop${_local_access}
+	private-address: 127.0.0.0/8
+${_local_zone}
+
+python:
+
+dynlib:
+
+remote-control:
+	control-enable: yes
+	server-key-file: "unbound_server.key"
+	server-cert-file: "unbound_server.pem"
+	control-key-file: "unbound_control.key"
+	control-cert-file: "unbound_control.pem"
+EOF
+
+	return 0
+}
+
+unset IP
+unset MASKBITS
+unset NETWORK
+
+while getopts B:I:N: opt; do
+	case "${opt}" in
+	"B")
+		MASKBITS="${OPTARG}"
+		shift 2
+		;;
+	"I")
+		IP="${OPTARG}"
+		shift 2
+		;;
+	"N")
+		NETWORK="${OPTARG}"
+		shift 2
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ -z "${UNBOUND_CONF}" ]; then
+	echo 'Error: The variable $UNBOUND_CONF is not set.'
+	exit 1
+fi
+
+# Create the unbound configuration files.
+if ! unbound_write_config "${IP}" "${NETWORK}" "${MASKBITS}"; then
+	echo "Error: Failed to create the unbound configuration file."
+	exit 1
+fi
+
+# And then restart the unbound.
+/usr/bin/killall unbound
+if ! /usr/local/sbin/unbound -c "${UNBOUND_CONF}"; then
+	echo "Error: Cannot start the unbound daemon."
+	exit 1
+fi
+
+exit 0

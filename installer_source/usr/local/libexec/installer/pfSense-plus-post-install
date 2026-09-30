@@ -1,0 +1,232 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-plus-post-install module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+LOADER_CONF="/boot/loader.conf"
+
+rcc_hints() {
+	local _destdir _loaderconf
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+
+	_destdir="${1}"
+	_loaderconf="${_destdir}${LOADER_CONF}"
+	/bin/cat << EOF >> "${_loaderconf}"
+boot_serial="YES"
+console="comconsole"
+comconsole_port="0x2F8"
+hint.uart.0.flags="0x00"
+hint.uart.1.flags="0x10"
+EOF
+
+	return 0
+}
+
+4200_hints() {
+	local _destdir _loaderconf
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+
+	_destdir="${1}"
+	_loaderconf="${_destdir}${LOADER_CONF}"
+	/bin/cat << EOF >> "${_loaderconf}"
+hw.uart.console="mm:0xfe03e000"
+dev.igc.0.iflib.override_nrxqs="1"
+dev.igc.1.iflib.override_nrxqs="1"
+dev.igc.2.iflib.override_nrxqs="1"
+dev.igc.3.iflib.override_nrxqs="1"
+EOF
+	return 0
+}
+
+6100_hints() {
+	local _destdir _loaderconf
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+
+	_destdir="${1}"
+	_loaderconf="${_destdir}${LOADER_CONF}"
+	/bin/cat << EOF >> "${_loaderconf}"
+hint-model.4100_6100_6200_8200.cordbuc.0.at="isa"
+hint-model.4100_6100_6200_8200.cordbuc.0.port="0x800"
+hint-model.4100_6100_6200_8200.gpioled.0.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.0.pins="0x001"
+hint-model.4100_6100_6200_8200.gpioled.0.name="red1"
+hint-model.4100_6100_6200_8200.gpioled.0.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.1.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.1.pins="0x002"
+hint-model.4100_6100_6200_8200.gpioled.1.name="green1"
+hint-model.4100_6100_6200_8200.gpioled.1.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.2.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.2.pins="0x004"
+hint-model.4100_6100_6200_8200.gpioled.2.name="blue1"
+hint-model.4100_6100_6200_8200.gpioled.2.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.3.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.3.pins="0x008"
+hint-model.4100_6100_6200_8200.gpioled.3.name="amber1"
+hint-model.4100_6100_6200_8200.gpioled.3.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.4.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.4.pins="0x010"
+hint-model.4100_6100_6200_8200.gpioled.4.name="red2"
+hint-model.4100_6100_6200_8200.gpioled.4.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.5.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.5.pins="0x020"
+hint-model.4100_6100_6200_8200.gpioled.5.name="green2"
+hint-model.4100_6100_6200_8200.gpioled.5.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.6.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.6.pins="0x040"
+hint-model.4100_6100_6200_8200.gpioled.6.name="blue2"
+hint-model.4100_6100_6200_8200.gpioled.6.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.7.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.7.pins="0x080"
+hint-model.4100_6100_6200_8200.gpioled.7.name="amber2"
+hint-model.4100_6100_6200_8200.gpioled.7.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.8.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.8.pins="0x100"
+hint-model.4100_6100_6200_8200.gpioled.8.name="red3"
+hint-model.4100_6100_6200_8200.gpioled.8.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.9.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.9.pins="0x200"
+hint-model.4100_6100_6200_8200.gpioled.9.name="green3"
+hint-model.4100_6100_6200_8200.gpioled.9.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.10.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.10.pins="0x400"
+hint-model.4100_6100_6200_8200.gpioled.10.name="blue3"
+hint-model.4100_6100_6200_8200.gpioled.10.invert="1"
+hint-model.4100_6100_6200_8200.gpioled.11.at="gpiobus0"
+hint-model.4100_6100_6200_8200.gpioled.11.pins="0x800"
+hint-model.4100_6100_6200_8200.gpioled.11.name="amber3"
+hint-model.4100_6100_6200_8200.gpioled.11.invert="1"
+EOF
+
+	return 0
+}
+
+7100_hints() {
+	local _destdir _loaderconf
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+
+	_destdir="${1}"
+	_loaderconf="${_destdir}${LOADER_CONF}"
+	/bin/cat << EOF >> "${_loaderconf}"
+hint-model.7100.mdio.0.at="ix2"
+hint-model.7100.e6000sw.0.addr=0
+hint-model.7100.e6000sw.0.is8190=1
+hint-model.7100.e6000sw.0.port0disabled=1
+hint-model.7100.e6000sw.0.port9cpu=1
+hint-model.7100.e6000sw.0.port10cpu=1
+hint-model.7100.e6000sw.0.port9speed=2500
+hint-model.7100.e6000sw.0.port10speed=2500
+EOF
+
+	return 0
+}
+
+pfSense_plus_post_install() {
+	local _destdir _rcc_hints _4200_hints _6100_hints _7100_hints
+	if [  "${#}" -lt 1 ]; then
+		return 1
+	fi
+	_destdir="${1}"
+	if [ "${#}" -eq 2 ] && [ -n "${2}" ]; then
+		_model="${2}"
+	fi
+
+	if [ -f "${_destdir}/boot/loader.conf.lua" ]; then
+		if [ "$(grep -c RCC "${_destdir}/boot/loader.conf.lua" \
+		    2> /dev/null)" = "0" ]; then
+			_rcc_hints="1"
+		fi
+		if [ "$(grep -c 4200 "${_destdir}/boot/loader.conf.lua" \
+		    2> /dev/null)" = "0" ]; then
+			_4200_hints="1"
+		fi
+		if [ "$(grep -c 6100 "${_destdir}/boot/loader.conf.lua" \
+		    2> /dev/null)" = "0" ]; then
+			_6100_hints="1"
+		fi
+		if [ "$(grep -c "80300-0134-" \
+		    "${_destdir}/boot/loader.conf.lua" \
+		    2> /dev/null)" = "0" ]; then
+			_7100_hints="1"
+		fi
+	else
+		_rcc_hints="1"
+		_4200_hints="1"
+		_6100_hints="1"
+		_7100_hints="1"
+	fi
+
+	if [ -n "${_rcc_hints}" ] && [ "${_rcc_hints}" = "1" ] && \
+	    [ -n "${_model}" ]; then
+		if [ "${_model}" = "RCC" ] || \
+		    [ "${_model}" = "RCC-VE" ] ||
+		    [ "${_model}" = "SG-2220" ]; then
+			rcc_hints "${_destdir}"
+		fi
+	fi
+	[ -n "${_4200_hints}" ] && [ "${_4200_hints}" = "1" ] && \
+	    [ -n "${_model}" ] && [ "${_model}" = "4200" ] && \
+	    4200_hints "${_destdir}"
+	[ -n "${_6100_hints}" ] && [ "${_6100_hints}" = "1" ] && \
+	    6100_hints "${_destdir}"
+	[ -n "${_7100_hints}" ] && [ "${_7100_hints}" = "1" ] && \
+	    7100_hints "${_destdir}"
+
+	return 0
+}
+
+
+#
+# Main
+#
+
+unset MODEL
+
+while getopts M: opt; do
+	case "${opt}" in
+	M)
+		MODEL="${OPTARG}"
+		shift 2
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ "${#}" -lt 1 ]; then
+	echo "Error: No destination path."
+	exit 1
+fi
+
+DESTDIR="${1}"
+
+# Final installation setup
+echo -n "pfSense Plus Post Installation setup .. "
+pfSense_plus_post_install "${DESTDIR}" "${MODEL}"
+echo "done."
+echo
+
+exit 0

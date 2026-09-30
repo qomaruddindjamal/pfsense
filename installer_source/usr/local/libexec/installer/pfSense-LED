@@ -1,0 +1,365 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-LED module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+LED5100="/usr/local/sbin/5100led"
+
+led_dev() {
+	local _cmd _leddev
+	if [ "${#}" -ne 2 ]; then
+		return 1
+	fi
+	_cmd="${1}"
+	_leddev="${2}"
+
+	if [ ! -c "/dev/led/${_leddev}" ]; then
+		return 2
+	fi
+
+	echo "${_cmd}" > "/dev/led/${_leddev}"
+	return 0
+}
+
+led_get_colors_cordoba() {
+	echo -n "red green blue amber"
+}
+
+led_get_colors_4200() {
+	echo -n "red green blue"
+}
+
+led_get_nleds_cordoba() {
+	echo -n "3"
+}
+
+led_get_nleds_4200() {
+	echo -n "3"
+}
+
+led_off_cordoba() {
+	local _colors _I _nleds
+
+	_colors="$(led_get_colors_cordoba)"
+	_nleds="$(led_get_nleds_cordoba)"
+
+	_I=1
+	while [ "${_I}" -le "${_nleds}" ]; do
+		for color in ${_colors}; do
+			led_dev "0" "${color}${_I}"
+		done
+		_I=$(( ${_I} + 1 ))
+	done
+
+	return 0
+}
+
+led_off_1100() {
+	led_dev "0" "led2"
+}
+
+led_off_4200() {
+	local _colors _I _nleds
+	_colors="$(led_get_colors_4200)"
+	_nleds="$(led_get_nleds_4200)"
+
+	_I=0
+	while [ "${_I}" -lt "${_nleds}" ]; do
+		for color in ${_colors}; do
+			led_dev "0" "${color}_${_I}"
+		done
+		_I=$(( ${_I} + 1 ))
+	done
+
+	return 0
+}
+
+led_off_5100() {
+	[ ! -f "${LED5100}" ] && return 1
+	"${LED5100}" 0
+	return 0
+}
+
+led_off_x100() {
+	local _gpiodev
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+	_gpiodev=${1}
+
+	I=0
+	while [ "${I}" -le 8 ]; do
+		/usr/sbin/gpioctl -f "/dev/gpioc${_gpiodev}" "${I}" 0 > /dev/null
+		I=$(( "${I}" + 1 ))
+	done
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.led.0.pwm=1 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.led.1.pwm=1 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.led.2.pwm=1 > /dev/null
+
+	return 0
+}
+
+led_off() {
+	local _model
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+	_model="${1}"
+
+	case "${_model}" in
+	"1100")
+		led_off_1100
+		;;
+	"2100"|"3100")
+		led_off_x100 "2"
+		;;
+	"4100"|"6100"|"6200"|"8200")
+		led_off_cordoba
+		;;
+	"4200")
+		led_off_4200
+		;;
+	"5100")
+		led_off_5100
+		;;
+	esac
+	return 0
+}
+
+led_installed_cordoba() {
+
+	led_off_cordoba
+	led_dev "d2" "blue2"
+
+	return 0
+}
+
+led_installed_1100() {
+
+	led_off_1100
+	led_dev "d1" "led2"
+
+	return 0
+}
+
+led_installed_4200() {
+
+	led_off_4200
+	led_dev "1" "blue_1"
+
+	return 0
+}
+
+led_installed_5100() {
+	[ ! -f "${LED5100}" ] && return 1
+	"${LED5100}" 3
+	return 0
+}
+
+led_installed_x100() {
+	local _gpiodev
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+	_gpiodev=${1}
+
+	led_off_x100 "${_gpiodev}"
+	/usr/sbin/gpioctl -f /dev/gpioc${_gpiodev} 5 duty 20 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.led.1.T1-T3=1040 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.pin.3.T4=3640 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.pin.4.T4=3640 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.led.1.pwm=0 > /dev/null
+
+	return 0
+}
+
+led_installed() {
+	local _model
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+	_model="${1}"
+
+	case "${_model}" in
+	"1100")
+		led_installed_1100
+		;;
+	"2100"|"3100")
+		led_installed_x100 "2"
+		;;
+	"4100"|"6100"|"6200"|"8200")
+		led_installed_cordoba
+		;;
+	"4200")
+		led_installed_4200
+		;;
+	"5100")
+		led_installed_5100
+		;;
+	esac
+	return 0
+}
+
+led_installing_cordoba() {
+
+	led_off_cordoba
+	led_dev "d2" "amber2"
+
+	return 0
+}
+
+led_installing_1100() {
+
+	led_off_1100
+	led_dev "d5" "led2"
+
+	return 0
+}
+
+led_installing_4200() {
+
+	led_off_4200
+	led_dev "1" "red_1"
+
+	return 0
+}
+
+led_installing_5100() {
+	[ ! -f "${LED5100}" ] && return 1
+	"${LED5100}" 2
+	return 0
+}
+
+led_installing_x100() {
+	local _gpiodev
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+	_gpiodev=${1}
+
+	led_off_x100 "${_gpiodev}"
+	/usr/sbin/gpioctl -f /dev/gpioc${_gpiodev} 3 duty 150 > /dev/null
+	/usr/sbin/gpioctl -f /dev/gpioc${_gpiodev} 4 duty 15 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.led.1.T1-T3=1040 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.pin.3.T4=3640 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.pin.4.T4=3640 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.led.1.pwm=0 > /dev/null
+
+	return 0
+}
+
+led_installing() {
+	local _model
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+	_model="${1}"
+
+	case "${_model}" in
+	"1100")
+		led_installing_1100
+		;;
+	"2100"|"3100")
+		led_installing_x100 "2"
+		;;
+	"4100"|"6100"|"6200"|"8200")
+		led_installing_cordoba
+		;;
+	"4200")
+		led_installing_4200
+		;;
+	"5100")
+		led_installing_5100
+		;;
+	esac
+	return 0
+}
+
+led_ready_cordoba() {
+
+	led_off_cordoba
+	led_dev "d2" "green2"
+
+	return 0
+}
+
+led_ready_1100() {
+
+	led_off_1100
+	led_dev "d2" "led2"
+
+	return 0
+}
+
+led_ready_4200() {
+
+	led_off_4200
+	led_dev "1" "green_1"
+
+	return 0
+}
+
+led_ready_5100() {
+	[ ! -f "${LED5100}" ] && return 1
+	"${LED5100}" 4
+	return 0
+}
+
+led_ready_x100() {
+	local _gpiodev
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+	_gpiodev=${1}
+
+	led_off_x100 "${_gpiodev}"
+	/usr/sbin/gpioctl -f /dev/gpioc${_gpiodev} 4 duty 20 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.led.1.T1-T3=1040 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.led.1.T2=520 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.pin.4.T4=3640 > /dev/null
+	/sbin/sysctl -q dev.gpio.${_gpiodev}.led.1.pwm=0 > /dev/null
+
+	return 0
+}
+
+led_ready() {
+	local _model
+	if [ "${#}" -ne 1 ]; then
+		return 1
+	fi
+	_model="${1}"
+
+	case "${_model}" in
+	"1100")
+		led_ready_1100
+		;;
+	"2100"|"3100")
+		led_ready_x100 "2"
+		;;
+	"4100"|"6100"|"6200"|"8200")
+		led_ready_cordoba
+		;;
+	"4200")
+		led_ready_4200
+		;;
+	"5100")
+		led_ready_5100
+		;;
+	esac
+	return 0
+}

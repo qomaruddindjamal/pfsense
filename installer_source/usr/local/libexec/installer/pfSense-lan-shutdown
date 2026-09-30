@@ -1,0 +1,102 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-lan-shutdown module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+
+unset IF
+unset IP
+unset MASK
+unset TYPE
+unset VLAN
+
+while getopts i:I:M:T:V: opt; do
+	case "${opt}" in
+	i)
+		IF="${OPTARG}"
+		shift 2
+		;;
+	I)
+		IP="${OPTARG}"
+		shift 2
+		;;
+	M)
+		MASK="${OPTARG}"
+		shift 2
+		;;
+	T)
+		TYPE="${OPTARG}"
+		shift 2
+		;;
+	V)
+		VLAN="${OPTARG}"
+		shift 2
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ -z "${IF}" ]; then
+	echo "Error: No interface name provided."
+	exit 1
+fi
+_if="$(if_name "${IF}" "${VLAN}")"
+
+case "${TYPE}" in
+DHCP)
+	if [ -z "${_if}" ]; then
+		echo "Error: Invalid arguments for DHCP."
+		exit 1
+	fi
+	if ! dhclient_kill "${_if}"; then
+		echo "Warning: Failed to kill the ${_if} dhclient."
+	fi
+	;;
+STATIC)
+	if [ -z "${_if}" ] || [ -z "${IP}" ]; then
+		echo "Error: Invalid arguments for fixed IP."
+		exit 1
+	fi
+	/usr/bin/killall dhcpd
+	if ! "${INSTALL_INC_PATH}/pfSense-unbound"; then
+		echo "Error: Cannot configure and/or start the unbound daemon."
+		exit 1
+	fi
+	# Remove the interface IP.
+	if ! /sbin/ifconfig "${_if}" "${IP}" delete; then
+		echo "Warning: Failed to remove the LAN interface IP address."
+		echo "${_if}: ${IP}/${MASK}"
+	fi
+	;;
+*)
+	echo "Error: Invalid LAN type."
+	exit 1
+	;;
+esac
+
+if [ -n "${_if}" ] && [ "${IF}" != "${_if}" ]; then
+	if ! /sbin/ifconfig "${_if}" destroy; then
+		echo "Warning: Cannot destroy VLAN ${_if}"
+	fi
+fi
+
+exit 0

@@ -1,0 +1,91 @@
+#!/bin/sh
+#
+#
+# bsdinstall pfSense installation module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023i-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+BSDINSTALL_INC_PATH="/usr/libexec/bsdinstall"
+. "${BSDINSTALL_INC_PATH}/pfSense-common"
+
+hndi() {
+	local _ndi="${1}"
+
+	LEN="$(echo "${_ndi}" | "${AWK}" '{print length($0)}')"
+	if [ "${LEN}" -ne "${NDI_SIZE}" ]; then
+		echo -n "${_NDI}"
+		return 0
+	fi
+	I=1
+	unset ndi
+	while [ "${I}" -lt "${NDI_SIZE}" ]; do
+		N="$(echo "${NDI}" | "${AWK}" "{print substr(\$0, ${I}, 4)}")"
+		if [ -n "${ndi}" ]; then
+			ndi="${ndi} ${N}"
+		else
+			ndi="${N}"
+		fi
+		I=$(( ${I} + 4 ))
+	done
+	echo -n "${ndi}"
+}
+
+if ! install_eligibility_check; then
+	bsddialog --backtitle "$(get_title)" \
+	    --title ' pfSense Plus Validation Error ' \
+	    --msgbox '\nCannot verify the eligibility of this system,\nPlease try again.\n' 0 0
+	exit 1
+fi
+
+INFO="$(get_info)"
+ELIGIBLE="$(json_read "${INFO}" '.eligible')"
+
+# Is this system eligible for Plus access?
+if [ -n "${ELIGIBLE}" ] && [ "${ELIGIBLE}" = "true" ]; then
+	exit 0
+fi
+
+NDI="$(json_read "${INFO}" '.ndi')"
+MODEL="$(json_read "${INFO}" '."model_descr"')"
+LINES=14
+
+HNDI="$(hndi "${NDI}")"
+MSG="$(/bin/cat <<EOF
+
+This device does not have an active pfSense Plus subscription.
+
+To purchase pfSense Plus:
+     Software Store: https://www.netgate.com/purchase-plus
+                NDI: ${HNDI}
+and select 'Retry Validation' once purchase is complete.
+
+Or select 'Install CE' to install pfSense CE sofware.
+
+EOF
+)"
+
+exec 3>&1
+${BSDDIALOG} --backtitle "$(get_title)" \
+	--title " Active Subscription Validation " \
+	--colors --yes-label "Install CE" \
+	--no-label "Cancel" \
+	--extra-button --extra-label "Retry Validation" \
+	--yesno "${MSG}" "${LINES}" 74 2>&1 1>&3
+error="${?}"
+exec 3>&-
+
+exit "${error}"

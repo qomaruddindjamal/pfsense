@@ -1,0 +1,17 @@
+# Disk & ISO Images (Keep repository light and below GitHub 100MB limit)
+*.iso
+*.img
+*.img.gz
+*.raw
+*.raw.gz
+*.qcow2
+*.vmdk
+*.vdi
+
+# Temporary and build files
+*.tmp
+*.log
+*.swp
+*~
+.DS_Store
+Thumbs.db

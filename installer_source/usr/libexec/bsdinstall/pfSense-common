@@ -1,0 +1,1039 @@
+#!/bin/sh
+#
+#
+# bsdinstall pfSense installation module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
+AWK="/usr/bin/awk"
+BSDDIALOG="/usr/bin/bsddialog"
+CACERT="/var/etc/cert.pem"
+CAT="/bin/cat"
+CUT="/usr/bin/cut"
+CURL="/usr/local/bin/curl"
+CURLFLAGS="--cacert ${CACERT} -sN"
+DIALOG="/usr/bin/dialog"
+GREP="/usr/bin/grep"
+JQ="/usr/local/bin/jq"
+MKTEMP="/usr/bin/mktemp"
+RM="/bin/rm"
+SED="/usr/bin/sed"
+TEE="/usr/bin/tee"
+XARGS="/usr/bin/xargs"
+
+: "${INSTALL_LOG=/tmp/install-log.txt}"
+: "${INSTALLER_VERSION=/var/tmp/installer.version}"
+: "${INSTALLER_URL=https://installer.pfsense/installer}"
+: "${NDI_SIZE=20}"
+: "${NETGATE_INSTALLER_TITLE=Netgate Installer}"
+: "${PRODUCT=pfSense}"
+: "${REPOS_PATH=/usr/local/etc/${PRODUCT}}"
+
+connectivity_check() {
+	local _result _tmpfile
+
+	"${BSDDIALOG}" --backtitle "$(get_title)"	\
+	    --title " Connectivity Check " --colors	\
+	    --infobox "\nVerifying the Internet connection...\n\n\
+Trying to reach the Netgate Servers, please wait (this can take a while)...\n " \
+	    0 60
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/connectivity-check" > \
+	    "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+disks_count() {
+	echo -n "$(gen_count ".disk_count")"
+	return 0
+}
+
+disks_select_menu() {
+	local _count _info
+
+	unset DESTDISK
+	_count="$(disks_count)"
+	_info="$(get_info)"
+
+	[ "${_count}" -lt "1" ] && \
+	    return 1
+
+	"${BSDDIALOG}" --backtitle "$(get_title)"	\
+	    --title " Disk Selection " --colors	\
+	    --infobox "\nProbing devices, please wait (this can take a while)...\n " \
+	    0 60
+
+	I=0
+	DOPTS=""
+	while [ "${I}" -lt "${_count}" ]; do
+		local _disk_info _DESC _NAME _SIZE
+
+		_disk_info="$(json_read "${_info}" \
+		    ".disks[${I}].name, .disks[${I}].hmediasize, .disks[${I}].descr")"
+		_NAME="$(echo ${_disk_info} | "${AWK}" '{printf $1}')"
+		_SIZE="$(echo ${_disk_info} | "${AWK}" '{printf $2}')"
+		_DESC="$(echo ${_disk_info} | "${CUT}" -d' ' -f3-)"
+		if [ "${_DESC}" = "null" ] || [ -z "${_DESC}" ]; then
+			_DESC="${_NAME}"
+		fi
+
+		DOPTS="${DOPTS} \
+\"$_NAME\" \"$_SIZE <$_DESC>\""
+
+		I=$(( ${I} + 1 ))
+	done
+	exec 3>&1
+	export DESTDISK="$(echo $DOPTS | ${XARGS} -o "${BSDDIALOG}"	\
+	    --backtitle "$(get_title)"	\
+	    --title " Disk Selection " --colors	\
+	    --menu "\nSelect the disk for software installation.\n" \
+            0 0 0 2>&1 1>&3)" || exit 1
+	exec 3>&-
+
+	return 0
+}
+
+disks_select_multi_menu() {
+	local _count _info
+
+	unset DESTDISK
+	_count="$(disks_count)"
+	_info="$(get_info)"
+
+	[ "${_count}" -lt "1" ] && \
+	    return 1
+
+	"${BSDDIALOG}" --backtitle "$(get_title)"	\
+	    --title " Disk Selection " --colors	\
+	    --infobox "\nProbing devices, please wait (this can take a while)...\n " \
+	    0 60
+
+	I=0
+	DOPTS=""
+	while [ "${I}" -lt "${_count}" ]; do
+		local _disk_info _DESC _NAME _SIZE _STATE
+
+		_disk_info="$(json_read "${_info}" \
+		    ".disks[${I}].name, .disks[${I}].hmediasize, .disks[${I}].descr")"
+		_NAME="$(echo ${_disk_info} | "${AWK}" '{printf $1}')"
+		_SIZE="$(echo ${_disk_info} | "${AWK}" '{printf $2}')"
+		_DESC="$(echo ${_disk_info} | "${CUT}" -d' ' -f3-)"
+		_STATE="off"
+		[ "${_count}" = "1" ] && _STATE="on"
+		if [ "${_DESC}" = "null" ] || [ -z "${_DESC}" ]; then
+			_DESC="${_NAME}"
+		fi
+
+		DOPTS="${DOPTS} \
+\"$_NAME\" \"$_SIZE <$_DESC>\" \"${_STATE}\""
+
+		I=$(( ${I} + 1 ))
+	done
+	exec 3>&1
+	export DESTDISK="$(echo $DOPTS | ${XARGS} -o "${BSDDIALOG}"	\
+	    --backtitle "$(get_title)"	\
+	    --title " Disk Selection " --colors --separate-output		\
+	    --checklist "\nSelect the disk(s) for software installation.\n" \
+            0 0 0 2>&1 1>&3)" || exit 1
+	exec 3>&-
+
+	return 0
+}
+
+errx() {
+	local _msg _title
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+
+	_title="${1}"
+	_msg="${2}"
+	"${BSDDIALOG}" --colors --backtitle "$(get_title)" \
+	    --title " ${_title} " --msgbox "${_msg}" 0 0
+	return 0
+}
+
+gen_count() {
+	local _count _count_var
+
+	if [ "${#}" -ne 1 ]; then
+		echo -n "0"
+		return 0
+	fi
+
+	_count_var="${1}"
+	_count="$(json_read "$(get_info)" "${_count_var}")"
+	if [ "${_count}" = "null" ] || [ "${_count}" -lt "0" ]; then
+		_count=0
+	fi
+	echo -n "${_count}"
+	return 0
+}
+
+get_info() {
+	echo -n "$("${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/info")"
+	return 0
+}
+
+get_model_descr() {
+	echo -n "$(json_read "$(get_info)" '."model_descr"')"
+	return 0
+}
+
+get_title() {
+	local _version
+	[ -f "${INSTALLER_VERSION}" ] && [ -r "${INSTALLER_VERSION}" ] && \
+	    _version="$("${CAT}" "${INSTALLER_VERSION}")"
+	[ -n "${_version}" ] && \
+	    _version=" - ${_version}"
+	echo -n "${NETGATE_INSTALLER_TITLE}${_version}"
+	return 0
+}
+
+install_confirm() {
+	local _destdisk _result _tmpfile
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	_destdisk="${1}"
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} \
+	    "${INSTALLER_URL}/disk-commit-pre-check" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		errx "pfSense partitioning" "\nThe selected disk installation options failed in pre-check.\n "
+		return 1
+	fi
+
+	"${BSDDIALOG}" --backtitle "$(get_title)"	\
+	    --title " Confirmation " --colors	\
+	    --yesno \
+	    "\nLast Chance! Are you sure you want to destroy\n\
+the current contents of the following disks:\n\n     ${_destdisk}\n " \
+	    0 0 || return 1
+
+	"${BSDDIALOG}" --backtitle "$(get_title)"   \
+	    --title " Partitioning " --colors   \
+	    --infobox "\nCommiting the changes, please wait (this can take a while)...\n " \
+	    0 60
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "accept=1"	\
+	    "${INSTALLER_URL}/disk-commit" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+install_disk_add() {
+	local _disk _result _tmpfile
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	_disk="${1}"
+	for disk in ${_disk}; do
+		_tmpfile="$(${MKTEMP})"
+		if ! "${CURL}" ${CURLFLAGS} -d "disk=${disk}"	\
+		    "${INSTALLER_URL}/disk-add" > "${_tmpfile}"; then
+			"${RM}" -f "${_tmpfile}" 2> /dev/null
+			return 1
+		fi
+		_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+		if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+			return 1
+		fi
+	done
+
+	return 0
+}
+
+install_eligibility_check() {
+	local _result _tmpfile
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/eligibility-check" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+install_fstype_set() {
+	local _fstype _result _tmpfile
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	_fstype="${1}"
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "fstype=${_fstype}"	\
+	    "${INSTALLER_URL}/disk-fs-type" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+install_scheme_set() {
+	local _result _scheme _tmpfile
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	_scheme="${1}"
+	_tmpfile="$(${MKTEMP})s"
+	if ! "${CURL}" ${CURLFLAGS} -d "scheme=${_scheme}"	\
+	    "${INSTALLER_URL}/disk-part-scheme" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+install_zfs_voltype_set() {
+	local _result _tmpfile _voltype
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	_voltype="${1}"
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "voltype=${_voltype}"	\
+	    "${INSTALLER_URL}/disk-zfs-voltype" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+json_read() {
+	local _el _in
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_in="${1}"
+	_el="${2}"
+
+	echo -n "$(echo -n "${_in}" | "${JQ}" -r "${_el}" 2> /dev/null)"
+	return 0
+}
+
+nic_addr_set() {
+	local _addr _if _result _tmpfile
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	_addr="${2}"
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "if=${_if}" -d "addr=${_addr}" \
+	    "${INSTALLER_URL}/nic-addr" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+#
+# Fetch the NIC name assigned to LAN/WAN interface.
+#
+nic_assigned_if() {
+	local _if _IF
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+
+	_IF="$(nic_data_get "${_if}" "if")"
+	echo -n "${_IF}"
+	return 0
+}
+
+nic_count() {
+	echo -n "$(gen_count ".nic_count")"
+	return 0
+}
+
+nic_data_get() {
+	local _if _data
+	if [ "${#}" -ne 2 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+	_data="${2}"
+
+	echo -n "$(json_read "$(get_info)" ".${_if}.\"${_data}\"")"
+	return 0
+}
+
+nic_dhcpd_enable() {
+	local _if _state _result _tmpfile
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	_state="${2}"
+
+	case "${_state}" in
+	[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee])
+		;;
+	*)
+		return 1
+	esac
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} \
+	    -d "if=${_if}" -d "enable=${_state}" \
+	    "${INSTALLER_URL}/nic-dhcpd" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+nic_dhcpd_enable_get() {
+	local _if
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+	echo -n "$(json_read "$(get_info)" ".${_if}.\"dhcpd_enabled\"")"
+	return 0
+}
+
+nic_dhcpd_get() {
+	local _filter _if
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	if [ "${2}" = "end" ]; then
+		_filter="dhcpd_range_end"
+	elif [ "${2}" = "start" ]; then
+		_filter="dhcpd_range_start"
+	fi
+	echo -n "$(json_read "$(get_info)" ".${_if}.\"${_filter}\"")"
+	return 0
+}
+
+nic_dhcpd_set() {
+	local _end _if _start _result _tmpfile
+
+	[ "${#}" -ne 3 ] && \
+	    return 1
+	_if="${1}"
+	_start="${2}"
+	_end="${3}"
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} \
+	    -d "if=${_if}" -d "start=${_start}" -d "end=${_end}" \
+	    "${INSTALLER_URL}/nic-dhcpd" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+nic_dns_get() {
+	local _if _res
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+	_res="$(json_read "$(get_info)" ".${_if}.\"DNS_server\"")"
+	echo -n "${_res}"
+	return 0
+}
+
+nic_dns_set() {
+	local _if _dns _result _tmpfile
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	_dns="${2}"
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} \
+	    -d "if=${_if}" -d "dns=${_dns}" \
+	    "${INSTALLER_URL}/nic-addr" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+nic_gw_get() {
+	local _if
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+	echo -n "$(json_read "$(get_info)" ".${_if}.\"default_gateway\"")"
+	return 0
+}
+
+nic_gw_set() {
+	local _if _gw _result _tmpfile
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	_gw="${2}"
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} \
+	    -d "if=${_if}" -d "gw=${_gw}" \
+	    "${INSTALLER_URL}/nic-addr" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+nic_ip_get() {
+	local _if _IP
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+
+	_IP="$(nic_data_get "${_if}" "ip")"
+	echo -n "${_IP}"
+	return 0
+}
+
+nic_mode_get() {
+	local _if _MODE
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+
+	_MODE="$(nic_data_get "${_if}" "mode")"
+	echo -n "${_MODE}"
+	return 0
+}
+
+nic_mode_set() {
+	local _if _mode _result _tmpfile
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	_mode="${2}"
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "if=${_if}" -d "mode=${_mode}" \
+	    "${INSTALLER_URL}/nic-mode" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+	return 0
+}
+
+nic_pppoe_null_svc_get() {
+	local _if
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+	echo -n "$(json_read "$(get_info)" ".${_if}.\"PPPoE_NULL_Service\"")"
+	return 0
+}
+
+nic_pppoe_null_svc_set() {
+	local _if _result _state _tmpfile
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	_state="${2}"
+
+	case "${_state}" in
+	[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee])
+		;;
+	*)
+		return 1
+	esac
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "if=${_if}" -d "enable=${_state}" \
+	    "${INSTALLER_URL}/pppoe-null-service" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+nic_pppoe_pass_get() {
+	local _if
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+	echo -n "$(json_read "$(get_info)" ".${_if}.\"PPPoE_Password\"")"
+	return 0
+}
+
+nic_pppoe_pass_set() {
+	local _if _pass _result _tmpfile
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	_pass="${2}"
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "if=${_if}" -d "password=${_pass}" \
+	    "${INSTALLER_URL}/pppoe-password" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+nic_pppoe_svc_get() {
+	local _if
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+	echo -n "$(json_read "$(get_info)" ".${_if}.\"PPPoE_Service_Name\"")"
+	return 0
+}
+
+nic_pppoe_svc_set() {
+	local _if _service_name _result _tmpfile
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	_service_name="${2}"
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "if=${_if}" \
+	    -d "service-name=${_service_name}" \
+	    "${INSTALLER_URL}/pppoe-service-name" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+nic_pppoe_user_get() {
+	local _if
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+	echo -n "$(json_read "$(get_info)" ".${_if}.\"PPPoE_User\"")"
+	return 0
+}
+
+nic_pppoe_user_set() {
+	local _if _user _result _tmpfile
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	_user="${2}"
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "if=${_if}" -d "user=${_user}" \
+	    "${INSTALLER_URL}/pppoe-user" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+nic_unbound_local_get() {
+	local _if
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+	echo -n "$(json_read "$(get_info)" ".${_if}.\"unbound_local\"")"
+	return 0
+}
+
+nic_unbound_local_set() {
+	local _if _state _result _tmpfile
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_if="${1}"
+	_state="${2}"
+
+	case "${_state}" in
+	[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee])
+		;;
+	*)
+		return 1
+	esac
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "if=${_if}" -d "enable=${_state}" \
+	    "${INSTALLER_URL}/nic-unbound-local" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+#
+# Fetch the VLAN of an assigned interface.
+#
+nic_vlan_get() {
+	local _if _vlan
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+
+	_vlan="$(nic_data_get "${_if}" "vlan")"
+	if [ "${_vlan}" = "0" ]; then
+		echo -n ""
+		return 0
+	fi
+	echo -n "${_vlan}"
+	return 0
+}
+
+nic_vlan_pcp_get() {
+	local _if _pcp
+	if [ "${#}" -ne 1 ]; then
+		echo -n ""
+		return 1
+	fi
+	_if="${1}"
+
+	_pcp="$(nic_data_get "${_if}" "vlan_pcp")"
+	echo -n "${_pcp}"
+	return 0
+}
+
+nic_vlan_set() {
+	local _if _pcp _result _tmpfile _vlan
+
+	[ "${#}" -ne 3 ] && \
+	    return 1
+	_if="${1}"
+	_vlan="${2}"
+	_pcp="${3}"
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "if=${_if}" -d "vlan=${_vlan}" \
+	    -d "pcp=${_pcp}" "${INSTALLER_URL}/nic-vlan" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+repo_count() {
+	echo -n "$(gen_count ".repo_count")"
+	return 0
+}
+
+repo_fetch()  {
+	local _result _tmpfile
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/fetch-repos" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+	return 0
+}
+
+repo_msgs() {
+	local _info _MSGS
+
+	_info="$(get_info)"
+	_MSGS="$(json_read "${_info}" '.repo_messages[]')"
+	if [ "${?}" -ne "0" ]; then
+		_MSGS="$(json_read "${_info}" '.repo_messages')"
+	fi
+	if [ "${?}" -ne "0" ] || [ "${_MSGS}" = "null" ]; then
+		echo -n ""
+		return 1
+	fi
+
+	echo -n "${_MSGS}"
+	return 0
+}
+
+repo_setup() {
+	local _repo_name _result _tmpfile
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	_repo_name="${1}"
+	_tmpfile="$(${MKTEMP})"
+
+	if ! "${CURL}" ${CURLFLAGS} -d "repo=${_repo_name}"	\
+	    "${INSTALLER_URL}/setup-repo" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+repo_get_first() {
+	echo -n "$(json_read "$(get_info)" '.repos[].name')"
+	return 0
+}
+
+state_get() {
+	echo -n "$(json_read "$(get_info)" '.state[]')"
+	return 0
+}
+
+state_set() {
+	local _state
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	_state="${1}"
+	for state in $(state_get); do
+		if [ "${state}" = "${_state}" ]; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+zfs_voltype_menu() {
+	local _count _vopts
+
+	unset ZFS_VOLTYPE
+
+	_vopts=""
+	_count="$(disks_count)"
+	if [ "${_count}" -ge 5 ]; then
+		_vopts="${_vopts} \
+\"stripe\" \"Stripe - No Redundancy\" \"[1+ Disks] Striping provides maximum storage but no redundancy\" \
+\"mirror\" \"Mirror - n-Way Mirroring\" \"[2+ Disks] Mirroring provides the best performance, but the least storage\" \
+\"raid10\" \"RAID 1+0 - n x 2-Way Mirrors\" "[4+ Disks] Striped Mirrors provides the best performance, but the least storage" \
+\"raidz1\" \"RAID-Z1 - Single Redundant RAID\" \"[3+ Disks] Withstand failure of 1 disk. Recommended for: 3, 5 or 9 disks\" \
+\"raidz2\" \"RAID-Z2 - Double Redundant RAID\" \"[4+ Disks] Withstand failure of 2 disks. Recommended for: 4, 6 or 10 disks\" \
+\"raidz3\" \"RAID-Z3 - Triple Redundant RAID\" \"[5+ Disks] Withstand failure of 3 disks. Recommended for: 5, 7 or 11 disks\""
+	elif [ "${_count}" -ge 4 ]; then
+		_vopts="${_vopts} \
+\"stripe\" \"Stripe - No Redundancy\" \"[1+ Disks] Striping provides maximum storage but no redundancy\" \
+\"mirror\" \"Mirror - n-Way Mirroring\" \"[2+ Disks] Mirroring provides the best performance, but the least storage\" \
+\"raid10\" \"RAID 1+0 - n x 2-Way Mirrors\" "[4+ Disks] Striped Mirrors provides the best performance, but the least storage" \
+\"raidz1\" \"RAID-Z1 - Single Redundant RAID\" \"[3+ Disks] Withstand failure of 1 disk. Recommended for: 3, 5 or 9 disks\" \
+\"raidz2\" \"RAID-Z2 - Double Redundant RAID\" \"[4+ Disks] Withstand failure of 2 disks. Recommended for: 4, 6 or 10 disks\""
+	elif [ "${_count}" -ge 3 ]; then
+		_vopts="${_vopts} \
+\"stripe\" \"Stripe - No Redundancy\" \"[1+ Disks] Striping provides maximum storage but no redundancy\" \
+\"mirror\" \"Mirror - n-Way Mirroring\" \"[2+ Disks] Mirroring provides the best performance, but the least storage\" \
+\"raidz1\" \"RAID-Z1 - Single Redundant RAID\" \"[3+ Disks] Withstand failure of 1 disk. Recommended for: 3, 5 or 9 disks\""
+	elif [ "${_count}" -ge 2 ]; then
+		_vopts="${_vopts} \
+\"stripe\" \"Stripe - No Redundancy\" \"[1+ Disks] Striping provides maximum storage but no redundancy\" \
+\"mirror\" \"Mirror - n-Way Mirroring\" \"[2+ Disks] Mirroring provides the best performance, but the least storage\""
+	elif [ "${_count}" -ge 1 ]; then
+		_vopts="${_vopts} \
+\"stripe\" \"Stripe - No Redundancy\" \"[1+ Disks] Striping provides maximum storage but no redundancy\""
+	else
+		return 1
+	fi
+
+	exec 3>&1
+	export ZFS_VOLTYPE="$(echo $_vopts | ${XARGS} -o "${BSDDIALOG}"	\
+	    --item-help --backtitle "$(get_title)"	\
+	    --title " ZFS Virtual Device Type Configuration " --colors	\
+	    --menu "\nSelect the ZFS Virtual Device configuration type.\n "	\
+	    0 0 0 2>&1 1>&3)" || exit 1
+	exec 3>&-
+
+	return 0
+}

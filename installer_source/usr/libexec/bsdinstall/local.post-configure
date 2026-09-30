@@ -1,0 +1,7 @@
+#!/bin/sh
+#-
+
+if [ -f /root/factory.sh ]; then
+	sh -x /root/factory.sh 2>/tmp/factory.debug \
+	    || error "System configuration failed"
+fi

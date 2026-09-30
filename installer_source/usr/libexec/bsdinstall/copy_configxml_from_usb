@@ -1,0 +1,110 @@
+#!/bin/sh
+#-
+# Copyright (c) 2017-2024 Rubicon Communications, LLC
+# All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+# ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+# ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+# FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+# DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+# OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+# HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+# LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+# OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+# SUCH DAMAGE.
+#
+# $FreeBSD$
+recovery_mount=/tmp/mnt_recovery
+recovery_dir=/tmp/recovered_config
+encrypted_xml=/tmp/config_enc.xml
+decrypted_xml=/tmp/config_dec.xml
+mkdir -p ${recovery_mount}
+mkdir -p ${recovery_dir}
+
+CONFIG_XML_PATH=""
+
+look_for_config_xml_config_msdos() {
+	mkdir -p ${recovery_mount}
+	echo -n "Looking for config.xml on "
+	for try_device in `/sbin/gpart show -p | /usr/bin/egrep '(fat32|\!11|\!12|\!14)' | /usr/bin/awk '{print $3;}'`; do
+		if [ ! -e /dev/${try_device} ]; then
+			continue
+		fi
+		echo -n "${try_device}: "
+		if /sbin/mount -t msdosfs /dev/${try_device} ${recovery_mount} 2>/dev/null ; then
+			echo -n "[found msdos] "
+			# look for config.xml
+			if [ -r ${recovery_mount}/conf/config.xml  ]; then
+				echo -n "[config.xml on ${try_device}] "
+				CONFIG_XML_PATH="${recovery_mount}/conf/config.xml"
+				return 0
+			elif [ -r ${recovery_mount}/config.xml  ]; then
+				echo -n "[config.xml on ${try_device}] "
+				CONFIG_XML_PATH="${recovery_mount}/config.xml"
+				return 0
+			else
+				echo -n "[no config.xml on ${try_device}, unmounting] "
+				/sbin/umount ${recovery_mount}
+			fi
+		fi
+	done
+	return 1
+}
+
+# Try to locate an existing config.xml file
+if look_for_config_xml_config_msdos; then
+	if [ `/usr/bin/grep -c "BEGIN config.xml" ${CONFIG_XML_PATH}` -gt 0 ]; then
+		echo "config.xml is encrypted."
+		/usr/bin/grep -v "config.xml" ${CONFIG_XML_PATH} > ${encrypted_xml}
+
+		exec 3>&1
+		confpass=`/usr/bin/dialog --stdout --passwordbox \
+			"Enter the password to decrypt config.xml" 0 0`
+		exec 3>&-
+
+		if [ -z ${confpass} ]; then
+			echo -p "[Empty password given. Cancelling config.xml recover]"
+		else
+			/usr/bin/openssl enc -d -aes-256-cbc -in ${encrypted_xml} -out ${decrypted_xml} -pass pass:${confpass} -salt -md sha256 -pbkdf2 -base64 -iter 500000 2>/dev/null
+			if [ $? -eq 0 ]; then
+				/bin/cp ${decrypted_xml} ${recovery_dir}/config.xml
+				echo -n "[Copied decrypted config.xml file to recovery area] "
+			else
+				# Operation failed, try with old lower iteration default
+				/usr/bin/openssl enc -d -aes-256-cbc -in ${encrypted_xml} -out ${decrypted_xml} -pass pass:${confpass} -salt -md sha256 -pbkdf2 -base64 -iter 10000 2>/dev/null
+				if [ $? -eq 0 ]; then
+					/bin/cp ${decrypted_xml} ${recovery_dir}/config.xml
+					echo -n "[Copied decrypted config.xml file to recovery area] "
+				else
+					# Operation failed without new options, try old.
+					/usr/bin/openssl enc -d -aes-256-cbc -in ${encrypted_xml} -out ${decrypted_xml} -pass pass:${confpass} -salt -md md5 -base64 2>/dev/null
+					if [ $? -eq 0 ]; then
+						/bin/cp ${decrypted_xml} ${recovery_dir}/config.xml
+						echo -n "[Copied decrypted config.xml file to recovery area] "
+					else
+						echo -n "[Failed to decrypt config.xml. Cannot recover.] "
+					fi
+				fi
+			fi
+		fi
+		/bin/rm ${encrypted_xml}
+	else
+		/bin/cp -r ${CONFIG_XML_PATH} ${recovery_dir}
+		echo -n "[Copied config.xml file to recovery area] "
+	fi
+	/sbin/umount ${recovery_mount} 2>&1
+else
+	echo -n "[Could not locate an existing config.xml file!] "
+fi
+echo "Done."

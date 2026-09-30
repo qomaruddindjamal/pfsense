@@ -1,0 +1,373 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-copy-configxml module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+
+copy_configxml() {
+	local _dir _enc _enc_label _src_dir
+	[ "${#}" -lt 1 ] && \
+	    return 1
+	_src_dir="${1}"
+	_dir="${RECOVERY_DIR}/install-media"
+	if [ "${#}" -eq 2 ]; then
+		_dir="${_dir}/${2}"
+		_src_dir="${_src_dir}/${2}"
+	fi
+
+	/bin/mkdir -p "${_dir}"
+	if [ -r "${_src_dir}/config.xml" ]; then
+		/bin/cp "${_src_dir}/config.xml" "${_dir}"
+		_enc="$(/usr/bin/grep -c "BEGIN config.xml" "${_dir}/config.xml")"
+		_enc_label=""
+		if [ "${_enc}" -gt 0 ]; then
+			echo 1 > "${_dir}/config.xml.enc"
+			_enc_label="encrypted "
+		fi
+		echo "Recovered ${_enc_label}config.xml, stored in ${_dir}."
+	fi
+
+	for keytype in "rsa" "ed25519"; do
+		if [ -r "${_src_dir}/ssh_host_${keytype}_key" ] && \
+		    [ -r "${_src_dir}/ssh_host_${keytype}_key.pub" ]; then
+			/bin/cp "${_src_dir}/ssh_host_${keytype}_key" "${_dir}"
+			/bin/cp "${_src_dir}/ssh_host_${keytype}_key.pub" "${_dir}"
+			echo "Recovered ${keytype} SSH key, stored in ${_dir}."
+		fi
+	done
+
+	return 0
+}
+
+config_or_key_exist() {
+	local _config_dir _dev _found
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_dev="${1}"
+	_config_dir="${2}"
+	_found=0
+
+	# Look for the config.xml.
+	if [ -r "${_config_dir}/config.xml" ] && \
+	    [ -s "${_config_dir}/config.xml"  ]; then
+		echo "Attempting to recover config.xml from ${_dev}:${_config_dir}."
+		_found=1
+	fi
+
+	# Look for the SSH keys.
+	for keytype in "rsa" "ed25519"; do
+		if [ -r "${_config_dir}/ssh_host_${keytype}_key" ] && \
+		    [ -s "${_config_dir}/ssh_host_${keytype}_key" ] && \
+		    [ -r "${_config_dir}/ssh_host_${keytype}_key.pub" ] && \
+		    [ -s "${_config_dir}/ssh_host_${keytype}_key.pub" ]; then
+			echo "Attempting to recover ${keytype} SSH key from ${_dev}:${_config_dir}."
+			_found=1
+		fi
+	done
+
+	return "${_found}"
+}
+
+find_configxml() {
+	local _config_dir _dev _dir _found
+	[ "${#}" -ne 2 ] && \
+	    return 0
+	_dev="${1}"
+	_config_dir="${2}"
+	_found=0
+
+	# Look for configuration files and keys on the root of the file system.
+	if ! config_or_key_exist "${_dev}" "${_config_dir}"; then
+		copy_configxml "${_config_dir}"
+		_found=1
+	fi
+	# Look for configuration files and keys on subdirectories.
+	for _dir in $(/usr/bin/find "${_config_dir}" -type d -depth 1 2> /dev/null); do
+		_dir="${_dir#${_config_dir}/}"
+		if ! config_or_key_exist "${_dev}" "${_config_dir}/${_dir}"; then
+			copy_configxml "${_config_dir}" "${_dir}"
+			_found=1
+		fi
+	done
+
+	return "${_found}"
+}
+
+find_configxml_msdos() {
+	local _found _target_disks _try_device
+
+	_target_disks="$(/sbin/gpart show -p | \
+	    /usr/bin/egrep '(fat32|\!11|\!12|\!14)' | \
+	    "${AWK}" '{print $3;}')"
+
+	_found=0
+	for _try_device in ${_target_disks}; do
+		[ ! -e "/dev/${_try_device}" ] && \
+		    continue
+
+		echo -n "Looking for config.xml on ${_try_device}: "
+		if ! /sbin/mount -t msdosfs "/dev/${_try_device}" \
+		    "${RECOVERY_MOUNT}" 2>/dev/null; then
+			echo "[cannot mount, skipping]"
+			continue
+		fi
+		echo "[found msdos]"
+		# look for config.xml
+		if find_configxml "${_try_device}" "${RECOVERY_MOUNT}"; then
+			echo "[no config.xml on ${_try_device}]"
+		else
+			_found=1
+		fi
+		"${UMOUNT}" "${RECOVERY_MOUNT}"
+	done
+
+	return "${_found}"
+}
+
+filter_partition() {
+	local _disk _part _valid
+	[ "${#}" -ne 1 ] && \
+	    return 0
+	_part="${1}"
+
+	[ -z "${DISKS}" ] && \
+	    return 0
+
+	for _disk in ${DISKS}; do
+		_valid="$(echo "${_part}" | /usr/bin/grep -c "^${_disk}")"
+		[ "${_valid}" -eq 1 ] && \
+		    return 1
+	done
+
+	return 0
+}
+
+copy_recovered_configxml() {
+	local _enc _enc_label _dir _disk _src_dir
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_src_dir="${1}"
+	_disk="${2}"
+	_dir="${RECOVERY_DIR}/recovered/${_disk}"
+
+	/bin/mkdir -p "${_dir}" 2> /dev/null
+	if [ -r "${_src_dir}/cf/conf/config.xml" ] && \
+	    [ -s "${_src_dir}/cf/conf/config.xml" ]; then
+		/bin/cp "${_src_dir}/cf/conf/config.xml" "${_dir}/config.xml"
+		_enc="$(/usr/bin/grep -c "BEGIN config.xml" "${_dir}/config.xml")"
+		_enc_label=""
+		if [ "${_enc}" -gt 0 ]; then
+			echo 1 > "${_dir}/config.xml.enc"
+			_enc_label="encrypted "
+		fi
+		echo "Recovered ${_enc_label}config.xml from ${_disk}, stored in ${_dir}."
+	else
+		echo "${_disk} does not contain a readable config.xml for recovery."
+	fi
+
+	for keytype in "rsa" "ed25519"; do
+		if [ -r "${_src_dir}/etc/ssh/ssh_host_${keytype}_key" ] && \
+		    [ -s "${_src_dir}/etc/ssh/ssh_host_${keytype}_key" ] && \
+		    [ -r "${_src_dir}/etc/ssh/ssh_host_${keytype}_key.pub" ] && \
+		    [ -s "${_src_dir}/etc/ssh/ssh_host_${keytype}_key.pub" ]; then
+			/bin/cp "${_src_dir}/etc/ssh/ssh_host_${keytype}_key" \
+			    "${_dir}/ssh_host_${keytype}_key"
+			/bin/cp "${_src_dir}/etc/ssh/ssh_host_${keytype}_key.pub" \
+			    "${_dir}/ssh_host_${keytype}_key.pub"
+			echo "Recovered ${keytype} SSH key from ${_disk}, stored in ${_dir}."
+		fi
+	done
+
+	return 0
+}
+
+recover_ufs() {
+	local _attempts _mount_cmd _mount_rc _part
+	[ "${#}" -ne 1 ] && \
+	    return 1
+	_part="${1}"
+
+	# UFS Recovery, attempt to mount but also attempt cleanup if it fails.
+
+	_mount_cmd="/sbin/mount -t ufs /dev/${_part} ${RECOVERY_MOUNT}"
+	${_mount_cmd} 2>/dev/null
+	_mount_rc=$?
+	_attempts=0
+
+	#
+	# Try to run fsck up to 10 times and remount, in case the partition
+	# is dirty and needs cleanup.
+	#
+	while [ "${_mount_rc}" -ne 0 ] && [ "${_attempts}" -lt 10 ]; do
+		echo "Unable to mount ${_part}, running a disk check and retrying."
+		/sbin/fsck -y -t ufs "${_part}"
+		${_mount_cmd} 2>/dev/null
+		_mount_rc=$?
+		_attempts=$(($_attempts+1))
+	done
+	if [ "${_mount_rc}" -ne 0 ]; then
+		echo "Unable to mount ${_part} for config.xml recovery."
+		return 1
+	fi
+
+	copy_recovered_configxml "${RECOVERY_MOUNT}" "${_part}"
+	"${UMOUNT}" "${RECOVERY_MOUNT}" 2>/dev/null
+
+	return 0
+}
+
+recover_zfs() {
+	local _part _pool_id _pool_name _unmount_cf
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+	_part="${1}"
+
+	# ZFS Recovery works different than UFS, needs special handling
+	# Load KLD for ZFS support
+	if ! /sbin/kldstat -q -m zfs; then
+		/sbin/kldload zfs
+	fi
+
+	# Import pool with alternate mount.
+	_pool_info="$(/sbin/zpool import -d "/dev/${_part}" | \
+	    "${AWK}" '/pool:/ {printf "%s ", $2} / id:/ {print $2}')"
+	_pool_name="$(echo -n "${_pool_info}" | "${AWK}" '{print $1}')"
+	_pool_id="$(echo -n "${_pool_info}" | "${AWK}" '{print $2}')"
+
+	[ -z "${_pool_name}" ] && \
+	    return 1
+	[ "${_pool_name}" != "pfSense" ] && [ "${_pool_name}" != "zroot" ] && \
+	    return 1
+
+	if ! /sbin/zpool import -R "${RECOVERY_MOUNT}" -f "${_pool_id}"; then
+		return 1
+	fi
+
+	# Mount the default root directory of the previous install
+	# to get /etc for SSH keys (new and old) and config.xml (old)
+	/sbin/mount -t zfs "${_pool_name}/ROOT/default" "${RECOVERY_MOUNT}"
+
+	if [ ! -d "${RECOVERY_MOUNT}/cf/conf" ]; then
+		# New layout has /cf as its own dataset and doesn't need its
+		# root mounted manually to reach it, but it may not be mounted
+		# automatically
+		_unmount_cf="yes"
+		/bin/mkdir -p "${RECOVERY_MOUNT}/cf" 2> /dev/null
+		/sbin/mount -t zfs "${_pool_name}/ROOT/default/cf" "${RECOVERY_MOUNT}/cf"
+	fi
+
+	copy_recovered_configxml "${RECOVERY_MOUNT}" "${_part}"
+
+	# Cleanup. Unmount the disk partition.
+	if [ -n "${_unmount_cf}" ]; then
+		"${UMOUNT}" "${RECOVERY_MOUNT}/cf" 2>/dev/null
+	fi
+	"${UMOUNT}" "${RECOVERY_MOUNT}" 2>/dev/null
+	# Export the ZFS pool.
+	/sbin/zpool export -f "${_pool_name}"
+
+	return 0
+}
+
+recover_configxml() {
+	local _found _fs_type _target_disks _try_device
+
+	_found=0
+	_target_disks="$(/sbin/gpart show -p | \
+	    "${AWK}" '/(freebsd-ufs|freebsd-zfs)/ {print $3;}')"
+
+	for _try_device in ${_target_disks}; do
+		if filter_partition "${_try_device}"; then
+			continue
+		fi
+
+		# Find the filesystem type of the selected partition
+		_fs_type="$(/sbin/gpart show -p | \
+		    /usr/bin/grep "[[:space:]]${_try_device}[[:space:]]" | \
+		    "${AWK}" '{print $4;}')"
+		# Remove "freebsd-", leaving us with either "ufs" or "zfs".
+		_fs_type="${_fs_type#freebsd-}"
+
+		echo "Attempting to recover config.xml from ${_try_device}."
+
+		case "${_fs_type}" in
+		"ufs")
+			if recover_ufs "${_try_device}"; then
+				_found=1
+			fi
+			;;
+		"zfs")
+			if recover_zfs "${_try_device}"; then
+				_found=1
+			fi
+			;;
+		*)
+			return 0
+			;;
+		esac
+	done
+
+	[ "${_found}" = "1" ] && \
+	    return 1
+
+	return 0
+}
+
+#
+# Main
+#
+
+/bin/rm -rf "${RECOVERY_MOUNT}" 2> /dev/null
+/bin/rm -rf "${RECOVERY_DIR}" 2> /dev/null
+/bin/mkdir -p "${RECOVERY_MOUNT}" 2> /dev/null
+/bin/mkdir -p "${RECOVERY_DIR}" 2> /dev/null
+
+unset DISKS
+while getopts d: opt; do
+	case "${opt}" in
+	d)
+		[ -n "${DISKS}" ] && \
+		    DISKS="${DISKS} "
+		DISKS="${DISKS}${OPTARG}"
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+#
+# Look for any existing configuration files and/or SSH keys in the installation
+# media (and any other disk containing a FAT partition).
+#
+echo "Searching configuration backups on the installation media..."
+if find_configxml_msdos; then
+	echo -n "Could not locate a msdos partition. "
+fi
+echo "Done."
+
+echo "Searching for configuration files in the existing disks..."
+if recover_configxml; then
+	echo "Could not locate an existing XML configuration."
+fi
+echo "Done."
+
+exit 0

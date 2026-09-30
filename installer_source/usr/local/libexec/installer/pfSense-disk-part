@@ -1,0 +1,787 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-disk-part module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+DTB_SIZE="64M"
+DTB_FAT_LABEL="DTBFAT0"
+EFI_SIZE="260M"
+EFI_FAT_LABEL="EFISYS"
+EFI_GPT_LABEL="efiboot"
+SWAP_SIZE_DEFAULT="1G"
+ZFS_ASHIFT="12"
+ZFS_BEROOT="ROOT"
+ZFS_BOOTFS_NAME="default"
+ZFS_POOL="pfSense"
+
+wipe_partition_metadata() {
+	local _dev
+	[ "${#}" -ne 1 ] && \
+	    return 1
+	_dev="${1}"
+	if [ -z "${_dev}" ] || [ ! -c "/dev/${_dev}" ]; then
+		return 1
+	fi
+	/sbin/zpool labelclear -f "${_dev}" 2> /dev/null
+	return 0
+}
+
+destroy_disk_metadata() {
+	local _scheme _dev
+
+	if [ "${#}" -ne 2 ]; then
+		return 1
+	fi
+	_scheme="${1}"
+	_dev="${2}"
+	if [ -z "${_dev}" ] || [ ! -c "/dev/${_dev}" ]; then
+		return 1
+	fi
+
+	echo "Exporting ZFS pools..."
+	/sbin/zpool list -Ho name | while read z_name; do
+		/sbin/zpool export -F "${z_name}"
+	done
+
+	/sbin/gpart destroy -F "${_dev}"
+	/sbin/graid delete "${_dev}" 2> /dev/null
+	/sbin/zpool labelclear -f "${_dev}" 2> /dev/null
+
+	# Make doubly-sure backup GPT is destroyed
+	/sbin/gpart create -s GPT "${_dev}"
+	/sbin/gpart destroy -F "${_dev}"
+
+	if [ "${ARCH}" = "aarch64" ]; then
+		/usr/sbin/trim -f -q "${_dev}"
+	fi
+
+	return 0
+}
+
+create_gpt_part() {
+	local _dev _efi_fat_label _efi_gpt_label _idx _index _part_type
+	local _swap_label _type
+
+	while getopts i: opt; do
+		case "${opt}" in
+		"i")
+			_index="${OPTARG}"
+			shift 2
+			;;
+		esac
+	done
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+
+	_dev="${1}"
+	_type="${2}"
+	_efi_fat_label="${EFI_FAT_LABEL}"
+	_efi_gpt_label="${EFI_GPT_LABEL}1"
+	_swap_label="swap1"
+
+	case "${_type}" in
+	"UFS")
+		_part_type="freebsd-ufs"
+		;;
+	"ZFS")
+		_part_type="freebsd-zfs"
+		;;
+	*)
+		return 1
+		;;
+	esac
+
+	if [ -n "${_index}" ]; then
+		if [ "${_index}" -gt 1 ]; then
+			_efi_fat_label="${EFI_FAT_LABEL}${_index}"
+		fi
+		_efi_gpt_label="${EFI_GPT_LABEL}${_index}"
+		_swap_label="swap${_index}"
+	fi
+
+	if ! /sbin/gpart create -s GPT "${_dev}"; then
+		return 1
+	fi
+
+	_idx=1
+
+	# Add the EFI partition
+	if ! /sbin/gpart add -a 4k -l "${_efi_gpt_label}" \
+	    -t efi -s "${EFI_SIZE}" "${_dev}"; then
+		return 1
+	fi
+	wipe_partition_metadata "${_dev}p${_idx}"
+	if ! /sbin/newfs_msdos -F 16 -L "${_efi_fat_label}" \
+	    "/dev/${_dev}p${_idx}"; then
+		return 1
+	fi
+	_idx=$(( "${_idx}" + 1 ))
+
+	if [ "${ARCH}" = "aarch64" ]; then
+		# Add the DTB partition
+		if ! /sbin/gpart add -a 4m -t ms-basic-data -s \
+		    "${DTB_SIZE}" "${_dev}"; then
+			return 1
+		fi
+		wipe_partition_metadata "${_dev}p${_idx}"
+		if ! /sbin/newfs_msdos -F 16 -L "${DTB_FAT_LABEL}" \
+		    "/dev/${_dev}p${_idx}"; then
+			return 1
+		fi
+		_idx=$(( "${_idx}" + 1 ))
+	else
+		# Add the boot partition
+		if ! create_boot_part "${_type}" 2 "${_dev}"; then
+			return 1
+		fi
+		_idx=$(( "${_idx}" + 1 ))
+
+		# Add the swap partition
+		if ! /sbin/gpart add -a 4m -l "${_swap_label}" \
+		    -s "${SWAP_SIZE}" -t freebsd-swap "${_dev}"; then
+			return 1
+		fi
+		wipe_partition_metadata "${_dev}p${_idx}"
+		_idx=$(( "${_idx}" + 1 ))
+	fi
+
+	# Add the UFS/ZFS partition
+	if ! /sbin/gpart add -a 4m -t "${_part_type}" "${_dev}"; then
+		return 1
+	fi
+	wipe_partition_metadata "${_dev}p${_idx}"
+
+	if [ "${_type}" = "UFS" ]; then
+		# Initialize the UFS.
+		if ! /sbin/newfs -Uj "/dev/${_dev}p${_idx}"; then
+			return 1
+		fi
+	fi
+
+	return 0
+}
+
+create_mbr_part() {
+	local _dev _efi_fat_label _idx _index _part_type _type
+
+	while getopts i: opt; do
+		case "${opt}" in
+		"i")
+			_index="${OPTARG}"
+			shift 2
+			;;
+		esac
+	done
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+
+	_dev="${1}"
+	_type="${2}"
+
+	case "${_type}" in
+	"UFS")
+		_part_type="freebsd-ufs"
+		;;
+	"ZFS")
+		_part_type="freebsd-zfs"
+		;;
+	*)
+		return 1
+		;;
+	esac
+
+	_efi_fat_label="${EFI_FAT_LABEL}"
+	if [ -n "${_index}" ] && [ "${_index}" -gt 1 ]; then
+		_efi_fat_label="${EFI_FAT_LABEL}${_index}"
+	fi
+
+	# Initialize the MBR on the disk.
+	if ! /sbin/gpart create -s MBR "${_dev}"; then
+		return 1
+	fi
+
+	if [ "${ARCH}" = "amd64" ]; then
+		if ! /sbin/gpart bootcode -b /boot/boot0 "${_dev}"; then
+			return 1
+		fi
+	fi
+
+	_idx=1
+
+	# Add the EFI partition
+	if ! /sbin/gpart add -a 4k -t efi -s "${EFI_SIZE}" "${_dev}"; then
+		return 1
+	fi
+	wipe_partition_metadata "${_dev}s${_idx}"
+	if ! /sbin/newfs_msdos -F 16 -L "${_efi_fat_label}" \
+	    "/dev/${_dev}s${_idx}"; then
+		return 1
+	fi
+	_idx=$(( "${_idx}" + 1 ))
+
+	if [ "${ARCH}" = "aarch64" ]; then
+		# Add the DTB partition
+		if ! /sbin/gpart add -a 4k -t fat32 -s "${DTB_SIZE}" "${_dev}"; then
+			return 1
+		fi
+		wipe_partition_metadata "${_dev}s${_idx}"
+		if ! /sbin/newfs_msdos -F 16 -L "${DTB_FAT_LABEL}" "/dev/${_dev}s${_idx}"; then
+			return 1
+		fi
+		_idx=$(( "${_idx}" + 1 ))
+	fi
+
+	# Add the BSD partition, set it active.
+	if ! /sbin/gpart add -t freebsd -a 4m "${_dev}"; then
+		return 1
+	fi
+	if ! /sbin/gpart set -a active -i "${_idx}" "${_dev}"; then
+		return 1
+	fi
+
+	# Create the BSD scheme on the MBR partition
+	/sbin/gpart destroy -F "${_dev}s${_idx}"
+	wipe_partition_metadata "${_dev}s${_idx}"
+	if ! /sbin/gpart create -s BSD -n 20 "${_dev}s${_idx}"; then
+		return 1
+	fi
+
+	if [ "${ARCH}" = "aarch64" ]; then
+		# Install the boot code on the BSD label
+		if ! /sbin/gpart bootcode -b /boot/boot "${_dev}s${_idx}"; then
+			return 1
+		fi
+
+		# Add the pfSense partitions
+		if ! /sbin/gpart add -i 2 -t freebsd-swap \
+		    -s "${SWAP_SIZE}" "${_dev}s${_idx}"; then
+			return 1
+		fi
+		wipe_partition_metadata "${_dev}s${_idx}b"
+	fi
+
+	if ! /sbin/gpart add -t "${_part_type}" "${_dev}s${_idx}"; then
+		return 1
+	fi
+	wipe_partition_metadata "${_dev}s${_idx}a"
+
+	if [ "${_type}" = "UFS" ]; then
+		if ! /sbin/newfs -Uj "/dev/${_dev}s${_idx}a"; then
+			return 1
+		fi
+	fi
+
+	return 0
+}
+
+create_boot_part() {
+	local _fstype _idx _dev
+
+	if [ "${#}" -ne 3 ]; then
+		return 1
+	fi
+	_fstype="${1}"
+	_idx="${2}"
+	_dev="${3}"
+
+	# Add the boot partition
+	if ! /sbin/gpart add -a 4k -s 512k -t freebsd-boot "${_dev}"; then
+		return 1
+	fi
+	wipe_partition_metadata "${_dev}p${_idx}"
+
+	# Install the protective MBR copy and the boot code
+	case "${_fstype}" in
+	"UFS")
+		if ! /sbin/gpart bootcode -b /boot/pmbr -p /boot/gptboot \
+		    -i "${_idx}" "${_dev}"; then
+			return 1
+		fi
+		;;
+	"ZFS")
+		if ! /sbin/gpart bootcode -b /boot/pmbr -p /boot/gptzfsboot \
+		    -i "${_idx}" "${_dev}"; then
+			return 1
+		fi
+		;;
+	*)
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+create_ufs_part() {
+	local _scheme _dev
+
+	if [ "${#}" -ne 2 ]; then
+		return 1
+	fi
+	_scheme="${1}"
+	_dev="${2}"
+
+	case "${_scheme}" in
+	"GPT")
+		# Initialize the GPT on the disk.
+		if ! create_gpt_part "${_dev}" "UFS"; then
+			echo "Warning: Cannot create GPT layout."
+			return 1
+		fi
+		;;
+	"MBR")
+		if ! create_mbr_part "${_dev}" "UFS"; then
+			return 1
+		fi
+		;;
+	*)
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+create_zfs_part() {
+	local _scheme _dev _index
+
+	while getopts i: opt; do
+		case "${opt}" in
+		"i")
+			_index="${OPTARG}"
+			shift 2
+			;;
+		esac
+	done
+
+	if [ -z "${_index}" ] || [ "${#}" -ne 2 ]; then
+		return 1
+	fi
+
+	_scheme="${1}"
+	_dev="${2}"
+
+	case "${_scheme}" in
+	"GPT")
+		# Initialize the GPT on the disk.
+		if ! create_gpt_part -i "${_index}" "${_dev}" "ZFS"; then
+			echo "Warning: Cannot create GPT layout."
+			return 1
+		fi
+		;;
+	"MBR")
+		if ! create_mbr_part -i "${_index}" "${_dev}" "ZFS"; then
+			return 1
+		fi
+		;;
+	*)
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+zfs_get_part() {
+	local _scheme _arch
+
+	if [ "${#}" -ne 2 ]; then
+		return 1
+	fi
+	_scheme="${1}"
+	_arch="${2}"
+
+	case "${_scheme}" in
+	"GPT")
+		case "${_arch}" in
+		"aarch64")
+			echo -n "p3"
+			;;
+		"amd64")
+			echo -n "p4"
+			;;
+		esac
+		;;
+	"MBR")
+		case "${_arch}" in
+		"aarch64")
+			echo -n "s3a"
+			;;
+		"amd64")
+			echo -n "s2a"
+			;;
+		esac
+		;;
+	*)
+		echo -n ""
+		;;
+	esac
+
+	return 0
+}
+
+create_zfs_pool() {
+	local _scheme="${1}"
+	local _zfs_vol_type="${2}"
+	local _mountp="${3}"
+	shift 3
+	local _disks="${@}"
+	local _vdevs=""
+	local _part="$(zfs_get_part "${_scheme}" "${ARCH}")"
+
+	if [ "${#}" -lt 1 ] || [ -z "${_part}" ]; then
+		return 1
+	fi
+
+	case "${_zfs_vol_type}" in
+	"stripe")
+		for disk in ${_disks}; do
+			_vdevs="${_vdevs} ${disk}${_part}"
+		done
+		;;
+	"mirror")
+		_vdevs="mirror"
+		for disk in ${_disks}; do
+			_vdevs="${_vdevs} ${disk}${_part}"
+		done
+		;;
+	"raid10")
+		idx=1
+		for disk in ${_disks}; do
+			if [ $(( ${idx} % 3 )) -eq 0 ]; then
+				_vdevs="${_vdevs} mirror"
+			fi
+			_vdevs="${_vdevs} ${disk}"
+			idx=$(( ${idx} + 1 ))
+		done
+		;;
+	"raidz1")
+		_vdevs="raidz1"
+		for disk in ${_disks}; do
+			_vdevs="${_vdevs} ${disk}${_part}"
+		done
+		;;
+	"raidz2")
+		_vdevs="raidz2"
+		for disk in ${_disks}; do
+			_vdevs="${_vdevs} ${disk}${_part}"
+		done
+		;;
+	"raidz3")
+		_vdevs="raidz3"
+		for disk in ${_disks}; do
+			_vdevs="${_vdevs} ${disk}${_part}"
+		done
+		;;
+	esac
+
+	if ! /sbin/zpool create -d -f -m none \
+	    -O compress=lz4 -O atime=off \
+	    -o autotrim=on \
+	    -o feature@async_destroy=enabled \
+	    -o feature@bookmarks=enabled \
+	    -o feature@device_removal=enabled \
+	    -o feature@embedded_data=enabled \
+	    -o feature@empty_bpobj=enabled \
+	    -o feature@enabled_txg=enabled \
+	    -o feature@extensible_dataset=enabled \
+	    -o feature@filesystem_limits=enabled \
+	    -o feature@hole_birth=enabled \
+	    -o feature@large_blocks=enabled \
+	    -o feature@lz4_compress=enabled \
+	    -o feature@multi_vdev_crash_dump=enabled \
+	    -o feature@obsolete_counts=enabled \
+	    -o feature@sha512=enabled \
+	    -o feature@skein=enabled \
+	    -o feature@spacemap_histogram=enabled \
+	    -o feature@spacemap_v2=enabled \
+	    -o feature@zpool_checkpoint=enabled \
+	    -R "${_mountp}" "${ZFS_POOL}" ${_vdevs}; then
+		echo "Error: Cannot create ZFS pool"
+		exit 1
+	fi
+
+	while read OPTS DATASET; do
+		_OPTS=$(echo "${OPTS}" | sed 's/,/ -o /g')
+		zfs create -o ${_OPTS} "${ZFS_POOL}${DATASET}"
+	done <<EOF
+	mountpoint=none						/${ZFS_BEROOT}
+	mountpoint=/						/${ZFS_BEROOT}/${ZFS_BOOTFS_NAME}
+	mountpoint=/cf,copies=2,exec=off,setuid=off		/${ZFS_BEROOT}/${ZFS_BOOTFS_NAME}/cf
+	mountpoint=/home					/home
+	mountpoint=/tmp,setuid=off				/tmp
+	mountpoint=/var						/var
+	mountpoint=/var/cache,exec=off,setuid=off		/var/cache
+	mountpoint=/var/db,exec=off,setuid=off			/var/db
+	mountpoint=/var/cache/pkg,exec=off,setuid=off		/${ZFS_BEROOT}/${ZFS_BOOTFS_NAME}/var_cache_pkg
+	mountpoint=/var/db/pkg,exec=off,setuid=off		/${ZFS_BEROOT}/${ZFS_BOOTFS_NAME}/var_db_pkg
+	mountpoint=/var/log,exec=off,setuid=off			/var/log
+	mountpoint=/var/tmp,setuid=off				/var/tmp
+EOF
+	/usr/bin/install -f schg -d "${_mountp}/var/empty"
+
+	# Set canmount=noauto after creating the datasets so they are mounted
+	# where they should be for the install
+	/sbin/zfs set canmount=noauto "${ZFS_POOL}/ROOT/default"
+	/sbin/zfs set canmount=noauto "${ZFS_POOL}/ROOT/default/cf"
+	/sbin/zfs set canmount=noauto "${ZFS_POOL}/ROOT/default/var_cache_pkg"
+	/sbin/zfs set canmount=noauto "${ZFS_POOL}/ROOT/default/var_db_pkg"
+
+	zpool set "bootfs=${ZFS_POOL}/${ZFS_BEROOT}/${ZFS_BOOTFS_NAME}" "${ZFS_POOL}"
+}
+
+usage() {
+	cat << EOD >&2
+Usage:
+${0} [-m mount point] [-Z ZFS volume type] -F <FSTYPE> -S <SCHEME> -d <DISKDEV> [-d DISKDEVn] [-d DISKDEVn+1]
+
+Where:
+FSTYPE:	UFS / ZFS
+SCHEME:	GPT / MBR
+ZFS Volume type: stripe, mirror, raid10, raidz1, raidz2, raidz3.
+
+EOD
+}
+
+zfs_check_min_disks() {
+	local zfs_vol_type ndisks mindisks
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	zfs_vol_type="${1}"
+	ndisks="${2}"
+	mindisks=0
+
+	case "${zfs_vol_type}" in
+	"stripe")
+		mindisks="1"
+		;;
+	"mirror")
+		mindisks="2"
+		;;
+	"raid10")
+		mindisks="4"
+		;;
+	"raidz1")
+		mindisks="3"
+		;;
+	"raidz2")
+		mindisks="4"
+		;;
+	"raidz3")
+		mindisks="5"
+		;;
+	esac
+
+	if [ "${mindisks}" -eq "0" ] || [ "${ndisks}" -lt "${mindisks}" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+zfs_setup() {
+	# Load the ZFS module if necessary.
+	if ! /sbin/kldstat -q -m zfs; then
+		/sbin/kldload zfs
+	fi
+
+	# Set 4k blocks for ZFS.
+	ashift="$(sysctl -n vfs.zfs.min_auto_ashift)"
+	if [ "${ashift}" -lt "${ZFS_ASHIFT}" ]; then
+		sysctl "vfs.zfs.min_auto_ashift=${ZFS_ASHIFT}"
+	fi
+
+	return 0
+}
+
+unset DISKS
+unset FSTYPE
+unset MOUNTP
+unset NDISKS
+unset SCHEME
+unset SWAP_SIZE
+unset ZFS_VOL_TYPE
+NDISKS=0
+while getopts d:m:s:F:S:Z: opt; do
+	case "${opt}" in
+	"d")
+		[ -n "${DISKS}" ] && \
+		    DISKS="${DISKS} "
+		DISKS="${DISKS}${OPTARG}"
+		NDISKS=$(( ${NDISKS} + 1 ))
+		shift 2
+		;;
+	"m")
+		MOUNTP="${OPTARG}"
+		shift 2
+		;;
+	"s")
+		SWAP_SIZE="${OPTARG}"
+		shift 2
+		;;
+	"F")
+		FSTYPE="${OPTARG}"
+		case "${FSTYPE}" in
+		"UFS"|"ZFS")
+			;;
+		*)
+			echo "Error: Invalid FSTYPE: ${FSTYPE}"
+			exit 1
+			;;
+		esac
+		shift 2
+		;;
+	"S")
+		SCHEME="${OPTARG}"
+		case "${SCHEME}" in
+		"GPT"|"MBR")
+			;;
+		*)
+			echo "Error: Invalid SCHEME: ${SCHEME}"
+			exit 1
+			;;
+		esac
+		shift 2
+		;;
+	"Z")
+		ZFS_VOL_TYPE="${OPTARG}"
+		case "${ZFS_VOL_TYPE}" in
+		"stripe"|"mirror"|"raid10"|"raidz1"|"raidz2"|"raidz3")
+			;;
+		*)
+			echo "Error: Invalid ZFS volume type: ${ZFS_VOL_TYPE}"
+			exit 1
+			;;
+		esac
+		shift 2
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ "${NDISKS}" -lt 1 ] || [ "${NDISKS}" -gt 128 ]; then
+	echo "Error: Invalid disk count: ${NDISKS}"
+	exit 1
+fi
+
+if [ -z "${FSTYPE}" ]; then
+	echo "Error: Invalid paramenters - no file system type"
+	usage
+	exit 1
+fi
+
+if [ -z "${SCHEME}" ]; then
+	echo "Error: Invalid paramenters - no partition scheme"
+	usage
+	exit 1
+fi
+
+if [ "${FSTYPE}" = "ZFS" ] && [ -z "${ZFS_VOL_TYPE}" ]; then
+	echo "Error: No ZFS volume type selected."
+	usage
+	exit 1
+fi
+
+if [ "${FSTYPE}" = "ZFS" ] && [ -z "${MOUNTP}" ]; then
+	echo "Error: No mount point for the ZFS pool."
+	usage
+	exit 1
+fi
+
+[ -z "${SWAP_SIZE}" ] && \
+    SWAP_SIZE="${SWAP_SIZE_DEFAULT}"
+
+#
+# If the Swap partition has been disabled, create only a placeholder
+# to keep the disk layout the same.
+#
+if [ "${SWAP_SIZE}" = "0" ]; then
+	SWAP_SIZE="4m"
+fi
+
+ARCH="$(/usr/bin/uname -p)"
+
+# Load the ZFS module.
+zfs_setup
+
+case "${FSTYPE}" in
+"UFS")
+	if [ "${NDISKS}" -ne 1 ]; then
+		echo "Error: Invalid number of disks for the UFS file system."
+		exit 1
+	fi
+	for disk in ${DISKS}; do
+		if ! destroy_disk_metadata "${SCHEME}" "${disk}"; then
+			echo "Error: Failed to erase the disk metadata."
+			exit 1
+		fi
+	done
+	if ! create_ufs_part "${SCHEME}" ${DISKS}; then
+		echo "Error: Failed to create the UFS file system."
+		exit 1
+	fi
+	;;
+"ZFS")
+	if ! zfs_check_min_disks "${ZFS_VOL_TYPE}" "${NDISKS}"; then
+		echo "Error: Not enough disks for the selected ZFS volume type."
+		echo "Volume type: ${ZFS_VOL_TYPE}"
+		echo "Number of disks: ${NDISKS}"
+		echo "Disks: ${DISKS}"
+		usage
+		exit 1
+	fi
+	for disk in ${DISKS}; do
+		if ! destroy_disk_metadata "${SCHEME}" "${disk}"; then
+			echo "Error: Failed to erase the disk metadata."
+			exit 1
+		fi
+	done
+
+	# Clear ZFS labels from any online vdevs belonging to a conflicting pool
+	if /sbin/zpool import | /usr/bin/grep -q "pool: ${ZFS_POOL}"; then
+		_devs="$(/sbin/zpool import | \
+		    /usr/bin/awk '$1 == "pool:" { devs=0; valid=($2 == "pfSense"); next} /^[^:]+ONLINE/ {if (!devs) {devs = 1; next}} /ONLINE/{if (valid && devs) print $1;}')"
+		for _dev in ${_devs}; do
+			/sbin/zpool labelclear -f "/dev/${_dev}"
+		done
+	fi
+
+	index=1
+	for disk in ${DISKS}; do
+		if ! create_zfs_part -i "${index}" "${SCHEME}" "${disk}"; then
+			echo "Error: Failed to create the ZFS file system."
+			exit 1
+		fi
+		index=$(( ${index} + 1 ))
+	done
+	if ! create_zfs_pool "${SCHEME}" "${ZFS_VOL_TYPE}" \
+	    "${MOUNTP}" ${DISKS}; then
+		exit 1
+	fi
+	;;
+*)
+	exit 1
+	;;
+esac
+
+exit 0

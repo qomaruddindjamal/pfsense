@@ -1,0 +1,107 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-config-decrypt module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+config_decrypt() {
+	local _dec_xml _enc_xml _pass_file
+
+	[ "${#}" -ne 3 ] && \
+	    return 1
+
+	_enc_xml="${1}"
+	_dec_xml="${2}"
+	_pass_file="${3}"
+
+	/usr/bin/openssl enc -d -aes-256-cbc -in "${_enc_xml}" \
+	    -out "${_dec_xml}" -pass "file:${_pass_file}" -salt \
+	    -md sha256 -pbkdf2 -base64 -iter 500000 2>/dev/null
+	if [ "${?}" -eq 0 ]; then
+		echo "Decrypted ${_enc_xml} successful."
+		return 0
+	fi
+	"${RM}" -f "${_dec_xml}" 2> /dev/null
+
+	# Operation failed, try with old lower iteration default
+	/usr/bin/openssl enc -d -aes-256-cbc -in "${_enc_xml}" \
+	    -out "${_dec_xml}" -pass "file:${_pass_file}" -salt \
+	    -md sha256 -pbkdf2 -base64 -iter 10000 2>/dev/null
+	if [ "${?}" -eq 0 ]; then
+		echo "Decrypted ${_enc_xml} successful."
+		return 0
+	fi
+	"${RM}" -f "${_dec_xml}" 2> /dev/null
+
+	# Operation failed without new options, try old.
+	/usr/bin/openssl enc -d -aes-256-cbc -in "${_enc_xml}" \
+	    -out "${_dec_xml}" -pass "file:${_pass_file}" -salt \
+	    -md md5 -base64 2>/dev/null
+	if [ "${?}" -eq 0 ]; then
+		echo "Decrypted ${_enc_xml} successful."
+		return 0
+	fi
+	"${RM}" -f "${_dec_xml}" 2> /dev/null
+
+	echo "Warning: Failed to decrypt ${_enc_xml}."
+
+	return 1
+}
+
+
+#
+# Main
+#
+
+unset IN_XML
+unset OUT_XML
+unset PASS_FILE
+while getopts i:o:p: opt; do
+	case "${opt}" in
+	i)
+		IN="${OPTARG}"
+		shift 2
+		;;
+	o)
+		OUT="${OPTARG}"
+		shift 2
+		;;
+	p)
+		PASS_FILE="${OPTARG}"
+		shift 2
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ -z "${IN}" ] || [ -z "${OUT}" ]; then
+	echo "Error: The input and output files must be specified."
+	exit 1
+fi
+
+if [ -z "${PASS_FILE}" ] || [ ! -f "${PASS_FILE}" ] || \
+    [ ! -r "${PASS_FILE}" ] || [ ! -s "${PASS_FILE}" ]; then
+	echo "Error: Password file must be specified."
+	exit 1
+fi
+
+config_decrypt "${IN}" "${OUT}" "${PASS_FILE}"
+error="${?}"
+
+exit "${error}"

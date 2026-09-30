@@ -1,0 +1,471 @@
+#!/bin/sh
+#
+# pfSense Installer pfSense-common module.
+#
+# part of pfSense (https://www.pfsense.org)
+# Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
+# All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+AWK="/usr/bin/awk"
+BSDDIALOG="/usr/bin/bsddialog"
+CACERT="/var/etc/cert.pem"
+CAT="/bin/cat"
+CUT="/usr/bin/cut"
+CURL="/usr/local/bin/curl"
+CURLFLAGS="--cacert ${CACERT} -sN"
+GREP="/usr/bin/grep"
+JQ="/usr/local/bin/jq"
+LOGGER="/usr/bin/logger"
+MKTEMP="/usr/bin/mktemp"
+PFCTL="/sbin/pfctl"
+REPOC="/usr/local/sbin/pfSense-repoc-static"
+RESOLVCONF="/sbin/resolvconf"
+ROUTE="/sbin/route"
+RM="/bin/rm"
+SED="/usr/bin/sed"
+UMOUNT="/sbin/umount"
+
+DHCLIENT_CONF="/etc/dhclient.conf"
+DHCPD_CONF="/var/dhcpd/dhcpd.conf"
+DHCPD_LEASES="/var/db/dhcpd.leases"
+INSTALL_LOG="/tmp/install-log.txt"
+INSTALLER_PIPE="/var/run/installer.daemon"
+INSTALLER_URL="https://installer.pfsense/installer"
+INSTALLER_VERSION="/var/tmp/installer.version"
+MPD_CONF="/var/etc/mpd_wan.conf"
+MPD_PID="/var/run/pppoe_wan.pid"
+NETGATE_INSTALLER_TITLE="Netgate Installer"
+NETGATE_SERVER="www.netgate.com"
+NTP_SERVERS="216.239.35.0 216.239.35.4 216.239.35.8 216.239.35.12"
+RECOVERY_MOUNT="/tmp/mnt_recovery"
+RECOVERY_DIR="/tmp/recovered_config"
+UNBOUND_CONF="/var/unbound/unbound.conf"
+
+: "${PRODUCT=pfSense}"
+
+ce_repos_set() {
+	local _result _state _tmpfile
+
+	[ "${#}" -lt 1 ] && \
+	    return 1
+
+	_state="${1}"
+	case "${_state}" in
+	[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee])
+		;;
+	*)
+		return 1
+	esac
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "enable=${_state}" \
+	    "${INSTALLER_URL}/ce-repositories" 2>&1 > "${_tmpfile}"; then
+		${RM} -f "${_tmpfile}" 2>&1 > /dev/null
+		return 1
+	fi
+	_result=$(${GREP} -c "\"status\":\"ok\"" "${_tmpfile}")
+	${RM} -f "${_tmpfile}" 2>&1 > /dev/null
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+cfg_count() {
+	echo -n "$(gen_count ".cfg_count")"
+	return 0
+}
+
+cfg_password_set() {
+	local _data _result _tmpfile
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	_data="${1}"
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "@${_data}" \
+	    "${INSTALLER_URL}/config-password-set" > "${_tmpfile}"; then
+		"${RM}" -f "${_data}" 2> /dev/null
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	"${RM}" -f "${_data}" 2> /dev/null
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+        if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+cfg_restore_selected() {
+	local _cfg_count _cfg_dev _cfg_dir _cfg_enc _cfg_id _cfg_selected
+	local _cfg_type _dir_label _enc_label _i _info _label_default
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+	_info="${1}"
+	_label_default="\nSelected configuration file: default (blank) configuration.\n"
+
+	_cfg_count="$(cfg_count)"
+	if [ "${_cfg_count}" -eq 0 ]; then
+		echo -n "${_label_default}"
+		return 0
+	fi
+
+	_i=0
+	_cfg_selected="$(json_read "${_info}" '.cfg_selected')"
+	while [ "${_i}" -lt "${_cfg_count}" ]; do
+		_cfg_id="$(json_read "${_info}" ".restored_config[${_i}].id")"
+		if [ "${_cfg_id}" != "${_cfg_selected}" ]; then
+			_i=$(( "${_i}" + 1 ))
+			continue
+		fi
+		_cfg_dev="$(json_read "${_info}" ".restored_config[${_i}].dev")"
+		_cfg_dir="$(json_read "${_info}" ".restored_config[${_i}].dir")"
+		_cfg_enc="$(json_read "${_info}" ".restored_config[${_i}].encrypted")"
+		_cfg_type="$(json_read "${_info}" ".restored_config[${_i}].type")"
+
+		_enc_label=""
+		[ -n "${_cfg_enc}" ] && [ "${_cfg_enc}" = "true" ] && \
+		    _enc_label="encrypted "
+
+		if [ "${_cfg_type}" = "RECOVERED" ]; then
+			echo -n "\nSelected ${_enc_label}configuration file:\n\nRecovered from existing installation (${_cfg_dev}).\n"
+			return 0
+		fi
+		if [ "${_cfg_dir}" = "root" ]; then
+			_dir_label="/"
+		else
+			_dir_label="/${_cfg_dir}/"
+		fi
+		echo -n "\nSelected ${_enc_label}configuration file:\n\nRestore from installation media (${_dir_label}config.xml)\n"
+		return 0
+	done
+
+	echo -n "${_label_default}"
+	return 0
+}
+
+cfg_setup() {
+	local _cfg_id _result _tmpfile
+
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	_cfg_id="${1}"
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "id=${_cfg_id}" \
+	    "${INSTALLER_URL}/config-select" > "${_tmpfile}"; then
+		"${RM}" -f "${_tmpfile}" 2> /dev/null
+		return 1
+	fi
+	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
+	"${RM}" -f "${_tmpfile}" 2> /dev/null
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+console_serial_set() {
+	local _en _result _tmpfile
+
+	[ "${#}" -lt 1 ] && \
+	    return 1
+
+	_en="${1}"
+	case "${_en}" in
+	[yY][eE][sS]|[tT][rR][uU][eE]|[nN][oO]|[fF][aA][lL][sS][eE])
+		;;
+	*)
+		return 1
+	esac
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "enable=${_en}" \
+	    "${INSTALLER_URL}/console-serial" 2>&1 > "${_tmpfile}"; then
+		${RM} -f "${_tmpfile}" 2>&1 > /dev/null
+		return 1
+	fi
+	_result=$(${GREP} -c "\"status\":\"ok\"" "${_tmpfile}")
+	${RM} -f "${_tmpfile}" 2>&1 > /dev/null
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+console_type_set() {
+	local _result _tmpfile _type
+
+	[ "${#}" -lt 1 ] && \
+	    return 1
+
+	_type="${1}"
+	case "${_type}" in
+	"efi"|"video"|"none")
+		;;
+	*)
+		return 1
+	esac
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "type=${_type}" \
+	    "${INSTALLER_URL}/console-type" 2>&1 > "${_tmpfile}"; then
+		${RM} -f "${_tmpfile}" 2>&1 > /dev/null
+		return 1
+	fi
+	_result=$(${GREP} -c "\"status\":\"ok\"" "${_tmpfile}")
+	${RM} -f "${_tmpfile}" 2>&1 > /dev/null
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+errx() {
+	local _msg _title
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+
+	_title="${1}"
+	_msg="${2}"
+	"${BSDDIALOG}" --colors --backtitle "$(get_title)" \
+	    --title " ${_title} " --msgbox "${_msg}" 0 0
+	return 0
+}
+
+gen_count() {
+	local _count _count_var
+
+	if [ "${#}" -ne 1 ]; then
+		echo -n "0"
+		return 0
+	fi
+
+	_count_var="${1}"
+	_count="$(json_read "$(get_info)" "${_count_var}")"
+	if [ "${_count}" = "null" ] || [ "${_count}" -lt "0" ]; then
+		_count=0
+	fi
+	echo -n "${_count}"
+	return 0
+}
+
+if_name() {
+	local _if _vlan
+	[ "${#}" -lt 1 ] && \
+	    return 1
+	_if="${1}"
+	_vlan="0"
+	[ "${#}" -ge 2 ] && \
+	    _vlan="${2}"
+	if [ -z "${_vlan}" ] || \
+	    [ "${_vlan}" -lt 0 ] || \
+	    [ "${_vlan}" -gt 4094 ]; then
+		_vlan="0"
+	fi
+	if [ "${_vlan}" != "0" ]; then
+		echo -n "${_if}.${_vlan}"
+	else
+		echo -n "${_if}"
+	fi
+	return 0
+}
+
+dhclient_kill() {
+	local _if
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	_if="${1}"
+	[ ! -f "/var/run/dhclient/dhclient.${_if}.pid" ] && \
+	    return 0
+	_pid="$(/bin/cat "/var/run/dhclient/dhclient.${_if}.pid")"
+	[ -z "${_pid}" ] && \
+	    return 1
+	if ! /bin/kill "${_pid}"; then
+		echo "Failed to kill the ${_if} dhclient."
+		return 1
+	fi
+	return 0
+}
+
+get_info() {
+	echo -n "$("${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/info")"
+	return 0
+}
+
+get_model() {
+	echo -n "$(json_read "$(get_info)" '.model')"
+	return 0
+}
+
+get_model_descr() {
+	echo -n "$(json_read "$(get_info)" '."model_descr"')"
+	return 0
+}
+
+get_nid() {
+	echo -n "$(json_read "$(get_info)" '.ndi')"
+	return 0
+}
+
+get_unbound_local() {
+	local _if _res
+	_if="wan"
+	_res="$(json_read "$(get_info)" ".${_if}.\"unbound_local\"")"
+	echo -n "${_res}"
+	return 0
+}
+
+get_version() {
+	echo -n "$(json_read "$(get_info)" '.version')"
+	return 0
+}
+
+get_title() {
+	local _version
+	[ -f "${INSTALLER_VERSION}" ] && [ -r "${INSTALLER_VERSION}" ] && \
+	    _version="$("${CAT}" "${INSTALLER_VERSION}")"
+	[ -n "${_version}" ] && \
+	    _version=" - ${_version}"
+	echo -n "${NETGATE_INSTALLER_TITLE}${_version}"
+	return 0
+}
+
+installer_reboot() {
+	if state_set "DISK-MOUNTED"; then
+		if ! "${CURL}" ${CURLFLAGS} \
+		    "${INSTALLER_URL}/disk-umount" 2>&1 > /dev/null; then
+			return 1
+		fi
+	fi
+	if ! "${CURL}" ${CURLFLAGS} -d "confirm=1" \
+	    "${INSTALLER_URL}/reboot" 2>&1 > /dev/null; then
+		return 1
+	fi
+
+	while [ 1 ]; do
+		echo -n '.'
+		sleep 1
+	done
+
+	# Do not return.
+	exit 0
+}
+
+installer_reset() {
+	local _result _tmpfile
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} \
+	    "${INSTALLER_URL}/reset" 2>&1 > "${_tmpfile}"; then
+		${RM} -f "${_tmpfile}" 2>&1 > /dev/null
+		return 1
+	fi
+	_result=$(${GREP} -c "\"status\":\"ok\"" "${_tmpfile}")
+	${RM} -f "${_tmpfile}" 2>&1 > /dev/null
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
+
+json_read() {
+	local _el _in
+
+	[ "${#}" -ne 2 ] && \
+	    return 1
+	_in="${1}"
+	_el="${2}"
+
+	echo -n "$(echo -n "${_in}" | "${JQ}" -r "${_el}" 2> /dev/null)"
+	return 0
+}
+
+mpd_kill() {
+	local _if
+	[ "${#}" -ne 1 ] && \
+	    return 1
+
+	[ ! -f "${MPD_PID}" ] && \
+	    return 0
+	_pid="$(/bin/cat "${MPD_PID}")"
+	[ -z "${_pid}" ] && \
+	    return 1
+	if ! /bin/kill "${_pid}"; then
+		echo "Failed to kill the MPD daemon."
+		return 1
+	fi
+	return 0
+}
+
+get_info() {
+	echo -n "$("${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/info")"
+	return 0
+}
+
+state_get() {
+	echo -n "$(json_read "$(get_info)" '.state[]')"
+	return 0
+}
+
+state_set() {
+	local state _state
+	[ "${#}" -ne 1 ] && \
+	    return 1
+	_state="${1}"
+
+	for state in $(state_get); do
+		if [ "${state}" = "${_state}" ]; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+swap_size_set() {
+	local _result _tmpfile _size
+
+	[ "${#}" -lt 1 ] && \
+	    return 1
+
+	_size="${1}"
+
+	_tmpfile="$(${MKTEMP})"
+	if ! "${CURL}" ${CURLFLAGS} -d "size=${_size}" \
+	    "${INSTALLER_URL}/swap-size" 2>&1 > "${_tmpfile}"; then
+		${RM} -f "${_tmpfile}" 2>&1 > /dev/null
+		return 1
+	fi
+	_result=$(${GREP} -c "\"status\":\"ok\"" "${_tmpfile}")
+	${RM} -f "${_tmpfile}" 2>&1 > /dev/null
+	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
+		return 1
+	fi
+
+	return 0
+}
