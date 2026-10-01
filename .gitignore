@@ -23,3 +23,7 @@ installer_source/usr/lib/debug/
 
 # Reassembled large packages (only track .part* in git)
 installer_source/packages/All/pfSense-base-*.pkg
+
+# Screenshots and test artifacts
+artifacts/
+

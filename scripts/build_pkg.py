@@ -279,8 +279,8 @@ echo "[✓] Xray-core multi-protokol terpasang! Kelola dengan 'xray-control star
     )
     safe_rmtree(staging)
 
-def build_virtual():
-    print("=== Membangun virtual.pkg (aaPanel VM Engine) ===")
+def build_kvm():
+    print("=== Membangun kvm.pkg (aaPanel KVM Engine) ===")
     staging = BASE_DIR / "staging_aapanel"
     if staging.exists():
         safe_rmtree(staging)
@@ -357,10 +357,10 @@ done
 echo "[✓] aaPanel integration package terpasang! Ketik 'aapanel-pfsense' untuk opsi perintah."
 """
     create_pkg(
-        pkg_name="virtual",
+        pkg_name="kvm",
         version="1.0.0",
-        comment="Virtual Engine & Container Manager with aaPanel for pfSense",
-        desc="Paket virtualisasi bhyve dan container Linux lengkap dengan aaPanel di dalamnya untuk pfSense.",
+        comment="KVM & Virtual Engine Manager with aaPanel for pfSense",
+        desc="Paket virtualisasi KVM/bhyve dan container Linux lengkap dengan aaPanel di dalamnya untuk pfSense.",
         root_staging_dir=staging,
         post_install_script=post_install
     )
@@ -369,5 +369,5 @@ echo "[✓] aaPanel integration package terpasang! Ketik 'aapanel-pfsense' untuk
 if __name__ == "__main__":
     build_wireguard()
     build_xray()
-    build_virtual()
+    build_kvm()
     print("[*] Selesai membangun seluruh paket .pkg!")

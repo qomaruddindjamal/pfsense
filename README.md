@@ -7,7 +7,7 @@ Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO,
 ## 🚀 Fitur Utama
 
 1. **Paket Instalasi Offline ke Dalam ISO**:
-   - Seluruh paket (`wireguard-pfsense.pkg`, `xray-pfsense.pkg`, dan `virtual.pkg`) telah disisipkan ke dalam direktori offline installer (`/usr/local/share/packages/offline/`).
+   - Seluruh paket (`wireguard-pfsense.pkg`, `xray-pfsense.pkg`, dan `kvm.pkg`) telah disisipkan ke dalam direktori offline installer (`/usr/local/share/packages/offline/`).
    - Hook instalasi otomatis disematkan pada `installer_source/usr/local/libexec/installer/pfSense-post-install` sehingga saat instalasi dari ISO selesai, ketiga paket otomatis terpasang tanpa memerlukan koneksi internet.
    - Tersedia skrip remaster ISO: `scripts/remaster_iso.sh`.
 
@@ -68,7 +68,7 @@ pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages
 pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/xray-pfsense.pkg
 
 # 3. Pasang Mesin Virtual + aaPanel (.pkg)
-pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/virtual.pkg
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/kvm.pkg
 ```
 
 Setelah paket terpasang, gunakan CLI bawaan masing-masing:
@@ -142,7 +142,7 @@ sh packages/xray/install-xray.sh
 │   ├── pkg/                            # Paket resmi siap pasang (.pkg)
 │   │   ├── wireguard-pfsense.pkg       # Modul kernel & WebGUI WireGuard
 │   │   ├── xray-pfsense.pkg            # Xray multi-protokol & WebGUI VPN
-│   │   └── virtual.pkg                 # Mesin Virtual & aaPanel di dalamnya
+│   │   └── kvm.pkg                 # Mesin Virtual & aaPanel di dalamnya
 │   ├── wireguard/                      # Skrip & konfigurasi WireGuard
 │   │   ├── install-wireguard.sh
 │   │   ├── wg0.conf.example

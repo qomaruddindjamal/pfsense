@@ -20,7 +20,7 @@ packages/
     ├── pfSense-kernel-pfSense-2.9.0.pkg
     ├── wireguard-pfsense.pkg
     ├── xray-pfsense.pkg
-    ├── virtual.pkg
+    ├── kvm.pkg
     └── ... (PHP 8.5 stack, Python 3.11/3.12, Unbound, StrongSwan, dll.)
 ```
 

@@ -45,27 +45,7 @@ XARGS="/usr/bin/xargs"
 : "${REPOS_PATH=/usr/local/etc/${PRODUCT}}"
 
 connectivity_check() {
-	local _result _tmpfile
-
-	"${BSDDIALOG}" --backtitle "$(get_title)"	\
-	    --title " Connectivity Check " --colors	\
-	    --infobox "\nVerifying the Internet connection...\n\n\
-Trying to reach the Netgate Servers, please wait (this can take a while)...\n " \
-	    0 60
-
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/connectivity-check" > \
-	    "${_tmpfile}"; then
-		"${RM}" -f "${_tmpfile}" 2> /dev/null
-		return 1
-	fi
-	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
-	"${RM}" -f "${_tmpfile}" 2> /dev/null
-
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
+	# Mode offline: installer mandiri tidak perlu menunggu Netgate Server
 	return 0
 }
 
