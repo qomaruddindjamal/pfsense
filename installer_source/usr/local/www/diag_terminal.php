@@ -272,37 +272,89 @@ body.sidebar-collapsed #pf-main-content {
     box-sizing: border-box;
 }
 
-/* Minimal Top Title Bar */
-.terminal-header-bar {
-    height: 38px;
-    background-color: #12151c;
-    border-bottom: 1px solid #1f2430;
+/* Tabs Bar in Header */
+.terminal-tabs-wrapper {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0 16px;
-    flex-shrink: 0;
+    gap: 6px;
+    height: 100%;
+    overflow-x: auto;
+}
+
+.terminal-tabs-wrapper::-webkit-scrollbar {
+    display: none;
+}
+
+.terminal-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 4px 11px;
+    background-color: #171b24;
+    color: #8c95a6;
+    font-size: 12px;
+    font-weight: 500;
+    border-radius: 4px;
+    border: 1px solid #242a38;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    white-space: nowrap;
     user-select: none;
 }
 
-.terminal-title {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    font-size: 12.5px;
-    font-weight: 600;
+.terminal-tab:hover {
+    background-color: #202634;
     color: #e6edf3;
-    letter-spacing: 0.3px;
+    border-color: #313a4d;
 }
 
-.terminal-badge {
-    background-color: #1a2233;
+.terminal-tab.active {
+    background-color: #0b0d11;
     color: #58a6ff;
-    border: 1px solid #283754;
-    padding: 1px 7px;
-    border-radius: 4px;
+    border-color: #283754;
+    font-weight: 600;
+}
+
+.terminal-tab .tab-icon {
     font-size: 11px;
-    font-family: monospace;
+    opacity: 0.9;
+}
+
+.terminal-tab .tab-close {
+    font-size: 14px;
+    color: #8c95a6;
+    margin-left: 2px;
+    border-radius: 50%;
+    padding: 0 3px;
+    line-height: 1;
+}
+
+.terminal-tab .tab-close:hover {
+    color: #f85149;
+    background-color: rgba(248, 81, 73, 0.2);
+}
+
+.btn-new-tab {
+    background-color: #1a2332;
+    color: #58a6ff;
+    border: 1px solid #283850;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11.5px;
+    font-weight: 600;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.btn-new-tab:hover {
+    background-color: #223046;
+    color: #79c0ff;
+    border-color: #364e70;
 }
 
 .terminal-actions {
@@ -441,12 +493,14 @@ body.sidebar-collapsed #pf-main-content {
 </style>
 
 <div class="terminal-container" id="terminal-container">
-    <!-- Slim Modern Console Bar -->
+    <!-- Slim Modern Console Bar with Tabs -->
     <div class="terminal-header-bar">
-        <div class="terminal-title">
-            <i class="fa-solid fa-terminal" style="color: #4da3ff;"></i>
-            <span>pfSense Console &mdash; FreeBSD 16.0-CURRENT</span>
-            <span class="terminal-badge">/bin/sh</span>
+        <div class="terminal-tabs-wrapper" id="term-tabs-bar">
+            <!-- Tabs dynamically rendered here -->
+            <button type="button" class="btn-new-tab" id="btn-add-tab" title="<?=gettext("Buka Terminal Baru")?>">
+                <i class="fa-solid fa-plus"></i>
+                <span><?=gettext("New Terminal")?></span>
+            </button>
         </div>
         <div class="terminal-actions">
             <button type="button" class="term-btn" id="btn-font-dec" title="Kecilkan Font">A-</button>
@@ -481,9 +535,9 @@ body.sidebar-collapsed #pf-main-content {
 <script type="text/javascript">
 //<![CDATA[
 events.push(function() {
-    var currentCwd = '/root';
-    var history = [];
-    var historyIdx = -1;
+    var sessions = [];
+    var activeSessionId = null;
+    var nextSessionNum = 1;
     var currentFontSize = 13.5;
     var isExecuting = false;
 
@@ -514,9 +568,55 @@ events.push(function() {
         return str;
     }
 
-    function updatePromptCwd() {
-        var display = currentCwd === '/root' ? '~' : currentCwd;
-        $('#prompt-cwd').text(display);
+    function getActiveSession() {
+        for (var i = 0; i < sessions.length; i++) {
+            if (sessions[i].id === activeSessionId) {
+                return sessions[i];
+            }
+        }
+        return sessions[0] || null;
+    }
+
+    function renderTabs() {
+        var $bar = $('#term-tabs-bar');
+        $bar.find('.terminal-tab').remove();
+
+        sessions.forEach(function(s) {
+            var activeClass = (s.id === activeSessionId) ? ' active' : '';
+            var closeBtn = (sessions.length > 1) ? '<span class="tab-close" title="Tutup Terminal">&times;</span>' : '';
+            var $tab = $(
+                '<div class="terminal-tab' + activeClass + '" data-id="' + s.id + '">' +
+                '  <i class="fa-solid fa-terminal tab-icon"></i>' +
+                '  <span class="tab-title">' + escapeHtml(s.name) + '</span>' +
+                closeBtn +
+                '</div>'
+            );
+
+            $tab.on('click', function(e) {
+                if ($(e.target).hasClass('tab-close')) return;
+                switchSession(s.id);
+            });
+
+            $tab.find('.tab-close').on('click', function(e) {
+                e.stopPropagation();
+                closeSession(s.id);
+            });
+
+            $('#btn-add-tab').before($tab);
+        });
+
+        updateView();
+    }
+
+    function updateView() {
+        var s = getActiveSession();
+        if (!s) return;
+
+        var displayCwd = (s.cwd === '/root') ? '~' : s.cwd;
+        $('#prompt-cwd').text(displayCwd);
+        $('#term-content').html(s.content);
+        scrollToBottom();
+        focusInput();
     }
 
     function scrollToBottom() {
@@ -532,52 +632,92 @@ events.push(function() {
         }
     }
 
-    function initConsole() {
-        $('#term-content').empty();
-        currentCwd = '/root';
-        updatePromptCwd();
-        scrollToBottom();
-        focusInput();
+    function createSession() {
+        var num = nextSessionNum++;
+        var newSession = {
+            id: 'term_' + Date.now() + '_' + num,
+            name: 'Terminal ' + num,
+            cwd: '/root',
+            history: [],
+            historyIdx: -1,
+            content: '' // Clean start without banner
+        };
+
+        sessions.push(newSession);
+        switchSession(newSession.id);
     }
 
-    function appendCommandEcho(cmd) {
-        var display = currentCwd === '/root' ? '~' : currentCwd;
-        var html = '<div class="term-history-entry">' +
-                   '  <span class="term-cmd-echo"><span class="prompt-user">root@pfSense</span>:<span class="prompt-cwd">' + escapeHtml(display) + '</span><span class="prompt-char"> # </span>' + escapeHtml(cmd) + '</span>' +
-                   '</div>';
-        $('#term-content').append(html);
-        scrollToBottom();
+    function switchSession(id) {
+        activeSessionId = id;
+        renderTabs();
     }
 
-    function appendCommandOutput(output, isError) {
-        if (!output) return;
-        var cls = isError ? 'term-cmd-output term-cmd-error' : 'term-cmd-output';
-        var html = '<span class="' + cls + '">' + ansiToHtml(output) + '</span>';
-        $('#term-content').append(html);
-        scrollToBottom();
+    function closeSession(id) {
+        if (sessions.length <= 1) {
+            var s = getActiveSession();
+            if (s) {
+                s.content = '';
+                s.cwd = '/root';
+                s.history = [];
+                s.historyIdx = -1;
+                updateView();
+            }
+            return;
+        }
+
+        var idx = -1;
+        for (var i = 0; i < sessions.length; i++) {
+            if (sessions[i].id === id) {
+                idx = i;
+                break;
+            }
+        }
+
+        if (idx !== -1) {
+            sessions.splice(idx, 1);
+            if (activeSessionId === id) {
+                var nextActive = sessions[Math.max(0, idx - 1)];
+                activeSessionId = nextActive.id;
+            }
+            renderTabs();
+        }
     }
 
     function executeCommand(cmd) {
-        if (isExecuting) return;
-        cmd = cmd.trim();
+        var s = getActiveSession();
+        if (!s || isExecuting) return;
+
+        cmd = (cmd !== undefined) ? cmd.trim() : $('#term-input').val().trim();
 
         if (cmd === '') {
-            appendCommandEcho('');
+            var displayCwd = (s.cwd === '/root') ? '~' : s.cwd;
+            var echoLine = '<div class="term-history-entry">' +
+                           '  <span class="term-cmd-echo"><span class="prompt-user">root@pfSense</span>:<span class="prompt-cwd">' + escapeHtml(displayCwd) + '</span><span class="prompt-char"> # </span></span>' +
+                           '</div>';
+            s.content += echoLine;
+            $('#term-content').append(echoLine);
             scrollToBottom();
             focusInput();
             return;
         }
 
-        // Add to command history
-        if (history.length === 0 || history[history.length - 1] !== cmd) {
-            history.push(cmd);
+        // Add to session history
+        if (s.history.length === 0 || s.history[s.history.length - 1] !== cmd) {
+            s.history.push(cmd);
         }
-        historyIdx = history.length;
+        s.historyIdx = s.history.length;
 
-        appendCommandEcho(cmd);
+        var displayCwd = (s.cwd === '/root') ? '~' : s.cwd;
+        var promptEcho = '<div class="term-history-entry">' +
+                         '  <span class="term-cmd-echo"><span class="prompt-user">root@pfSense</span>:<span class="prompt-cwd">' + escapeHtml(displayCwd) + '</span><span class="prompt-char"> # </span>' + escapeHtml(cmd) + '</span>' +
+                         '</div>';
+        s.content += promptEcho;
+        $('#term-content').append(promptEcho);
         $('#term-input').val('');
+        scrollToBottom();
 
         if (cmd === 'clear') {
+            s.content = '';
             $('#term-content').empty();
             scrollToBottom();
             focusInput();
@@ -585,7 +725,11 @@ events.push(function() {
         }
 
         if (cmd === 'reset') {
-            initConsole();
+            s.content = '';
+            s.cwd = '/root';
+            s.history = [];
+            s.historyIdx = -1;
+            updateView();
             return;
         }
 
@@ -601,7 +745,7 @@ events.push(function() {
                 ajax: '1',
                 action: 'exec',
                 cmd: cmd,
-                cwd: currentCwd
+                cwd: s.cwd
             },
             success: function(resp) {
                 isExecuting = false;
@@ -609,14 +753,19 @@ events.push(function() {
                 $('#term-input').prop('disabled', false);
 
                 if (resp && resp.output === '__CLEAR__') {
+                    s.content = '';
                     $('#term-content').empty();
                 } else if (resp && resp.output) {
-                    appendCommandOutput(resp.output, !resp.success);
+                    var cls = (!resp.success) ? 'term-cmd-output term-cmd-error' : 'term-cmd-output';
+                    var outHtml = '<span class="' + cls + '">' + ansiToHtml(resp.output) + '</span>';
+                    s.content += outHtml;
+                    $('#term-content').append(outHtml);
                 }
 
                 if (resp && resp.cwd) {
-                    currentCwd = resp.cwd;
-                    updatePromptCwd();
+                    s.cwd = resp.cwd;
+                    var newDisplay = (s.cwd === '/root') ? '~' : s.cwd;
+                    $('#prompt-cwd').text(newDisplay);
                 }
 
                 scrollToBottom();
@@ -626,44 +775,53 @@ events.push(function() {
                 isExecuting = false;
                 $('#term-spinner').hide();
                 $('#term-input').prop('disabled', false);
-                appendCommandOutput("Error connecting to FreeBSD shell backend: " + (err || status) + "\n", true);
+                var errHtml = '<span class="term-cmd-output term-cmd-error">Error connecting to FreeBSD shell backend: ' + escapeHtml(err || status) + "\n</span>";
+                s.content += errHtml;
+                $('#term-content').append(errHtml);
                 scrollToBottom();
                 focusInput();
             }
         });
     }
 
-    // Input Keydown Handling (Enter, Arrow Up/Down, Ctrl+L, Ctrl+C)
+    // Input Keydown Handling
     $('#term-input').on('keydown', function(e) {
+        var s = getActiveSession();
+        if (!s) return;
+
         if (e.key === 'Enter') {
             e.preventDefault();
             executeCommand($(this).val());
         } else if (e.key === 'ArrowUp') {
             e.preventDefault();
-            if (history.length > 0) {
-                if (historyIdx > 0) {
-                    historyIdx--;
+            if (s.history.length > 0) {
+                if (s.historyIdx > 0) {
+                    s.historyIdx--;
                 }
-                $(this).val(history[historyIdx] || '');
+                $(this).val(s.history[s.historyIdx] || '');
             }
         } else if (e.key === 'ArrowDown') {
             e.preventDefault();
-            if (history.length > 0) {
-                if (historyIdx < history.length - 1) {
+            if (s.history.length > 0) {
+                if (s.historyIdx < s.history.length - 1) {
                     historyIdx++;
-                    $(this).val(history[historyIdx] || '');
+                    $(this).val(s.history[s.historyIdx] || '');
                 } else {
-                    historyIdx = history.length;
+                    s.historyIdx = s.history.length;
                     $(this).val('');
                 }
             }
         } else if (e.ctrlKey && e.key === 'l') {
             e.preventDefault();
+            s.content = '';
             $('#term-content').empty();
             scrollToBottom();
         } else if (e.ctrlKey && e.key === 'c') {
             e.preventDefault();
-            appendCommandEcho($(this).val() + '^C');
+            var displayCwd = (s.cwd === '/root') ? '~' : s.cwd;
+            var cancelLine = '<div class="term-history-entry"><span class="term-cmd-echo"><span class="prompt-user">root@pfSense</span>:<span class="prompt-cwd">' + escapeHtml(displayCwd) + '</span><span class="prompt-char"> # </span>' + escapeHtml($(this).val()) + '^C</span></div>';
+            s.content += cancelLine;
+            $('#term-content').append(cancelLine);
             $(this).val('');
             scrollToBottom();
         }
@@ -677,14 +835,29 @@ events.push(function() {
     });
 
     // Header Actions
+    $('#btn-add-tab').on('click', function() {
+        createSession();
+    });
+
     $('#btn-clear').on('click', function() {
-        $('#term-content').empty();
-        scrollToBottom();
-        focusInput();
+        var s = getActiveSession();
+        if (s) {
+            s.content = '';
+            $('#term-content').empty();
+            scrollToBottom();
+            focusInput();
+        }
     });
 
     $('#btn-reset').on('click', function() {
-        initConsole();
+        var s = getActiveSession();
+        if (s) {
+            s.content = '';
+            s.cwd = '/root';
+            s.history = [];
+            s.historyIdx = -1;
+            updateView();
+        }
     });
 
     $('#btn-font-inc').on('click', function() {
@@ -703,8 +876,8 @@ events.push(function() {
         }
     });
 
-    // Start with authentic console
-    initConsole();
+    // Start with Terminal 1
+    createSession();
 });
 //]]>
 </script>

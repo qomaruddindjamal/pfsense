@@ -194,13 +194,13 @@
 
 			if (currentScript === 'diag_terminal.php') {
 				$('.sidebar-item').removeClass('active');
-				$('a[href="/diag_terminal.php"]').closest('.sidebar-item').addClass('active');
+				$('.sidebar-link.direct-link[href="/diag_terminal.php"]').closest('.sidebar-item').addClass('active');
 				return;
 			}
 
 			if (currentScript === 'services_virtual.php') {
 				$('.sidebar-item').removeClass('active');
-				$('a[href="/services_virtual.php"]').closest('.sidebar-item').addClass('active');
+				$('.sidebar-link.direct-link[href="/services_virtual.php"]').closest('.sidebar-item').addClass('active');
 				return;
 			}
 

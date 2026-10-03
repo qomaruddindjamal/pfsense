@@ -426,7 +426,6 @@ $diagnostics_menu[] = array(gettext("States Summary"), "/diag_states_summary.php
 $diagnostics_menu[] = array(gettext("System Activity"), "/diag_system_activity.php");
 $diagnostics_menu[] = array(gettext("Traceroute"), "/diag_traceroute.php");
 $diagnostics_menu[] = array(gettext("Packet Capture"), "/diag_packet_capture.php");
-$diagnostics_menu[] = array(gettext("Terminal"), "/diag_terminal.php");
 
 $diagnostics_menu = msort(array_merge($diagnostics_menu, return_ext_menu("Diagnostics")), 0);
 
