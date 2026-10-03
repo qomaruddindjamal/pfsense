@@ -1,7 +1,7 @@
 <?php
 ##
 # diag_terminal.php
-# pfSense WebGUI: Diagnostics -> Terminal Console
+# pfSense WebGUI: Terminal Console (FreeBSD System Shell)
 # Part of pfSense Custom Edition
 ##
 
@@ -74,7 +74,7 @@ if (isset($_REQUEST['ajax']) && $_REQUEST['ajax'] == '1') {
             exit;
         }
 
-        // Execute system command
+        // Execute system command in FreeBSD native shell (/bin/sh)
         $descriptorspec = [
             0 => ["pipe", "r"], // stdin
             1 => ["pipe", "w"], // stdout
@@ -108,7 +108,7 @@ if (isset($_REQUEST['ajax']) && $_REQUEST['ajax'] == '1') {
             $exit_code = proc_close($process);
             $output = $stdout . $stderr;
         } else {
-            $output = "Gagal menjalankan perintah: proc_open() error.\n";
+            $output = "Gagal menjalankan perintah shell FreeBSD.\n";
             $exit_code = -1;
         }
 
@@ -125,38 +125,78 @@ if (isset($_REQUEST['ajax']) && $_REQUEST['ajax'] == '1') {
     exit;
 }
 
-$pgtitle = [gettext("Diagnostics"), gettext("Terminal Console")];
+// Fetch authentic FreeBSD / pfSense system banner
+$freebsd_banner = "";
+if (file_exists("/etc/rc.banner")) {
+    $freebsd_banner .= shell_exec("/etc/rc.banner 2>&1") . "\n";
+}
+$uname_out = shell_exec("/usr/bin/uname -mrs 2>&1");
+if ($uname_out) {
+    $freebsd_banner .= trim($uname_out) . "\n";
+}
+$freebsd_banner .= "Type any FreeBSD shell command to execute.\n";
+
+$pgtitle = [gettext("Terminal"), gettext("System Console")];
 $pglinks = ["", "@self"];
+$notitle = true; // Supress default header for full-bleed terminal view
 
 include("head.inc");
 ?>
 
 <style>
-/* Modern Terminal Console Styling */
-.terminal-page-container {
-    margin-top: 10px;
-    margin-bottom: 30px;
+/* Full Bleed Viewport Layout for Terminal */
+#pf-main-content {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+    width: calc(100% - var(--pf-sidebar-w)) !important;
+    left: var(--pf-sidebar-w) !important;
+    height: calc(100vh - var(--pf-header-h) - var(--pf-footer-h)) !important;
+    position: fixed !important;
+    top: var(--pf-header-h) !important;
+    overflow: hidden !important;
+    background-color: #0b0d11 !important;
 }
 
-.terminal-card {
-    background-color: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-    overflow: hidden;
+body.sidebar-collapsed #pf-main-content {
+    width: calc(100% - var(--pf-sidebar-mini-w)) !important;
+    left: var(--pf-sidebar-mini-w) !important;
+}
+
+@media (max-width: 991px) {
+    #pf-main-content {
+        width: 100% !important;
+        left: 0 !important;
+    }
+}
+
+.terminal-full-layout {
+    width: 100%;
+    height: 100%;
     display: flex;
     flex-direction: column;
+    background-color: #0b0d11;
+    overflow: hidden;
 }
 
-/* Tabs Bar */
-.terminal-tabs-bar {
+/* Top Tab Bar & Utilities */
+.terminal-top-strip {
     display: flex;
     align-items: center;
-    background-color: #161b22;
-    border-bottom: 1px solid #30363d;
-    padding: 6px 10px 0 10px;
-    gap: 4px;
+    justify-content: space-between;
+    background-color: #12151b;
+    border-bottom: 1px solid #1f2530;
+    padding: 4px 10px 0 10px;
+    height: 38px;
     user-select: none;
+    flex-shrink: 0;
+}
+
+.terminal-tabs-left {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 100%;
     overflow-x: auto;
 }
 
@@ -164,206 +204,169 @@ include("head.inc");
     display: inline-flex;
     align-items: center;
     gap: 8px;
-    padding: 7px 14px;
-    background-color: #21262d;
-    color: #8b949e;
-    font-size: 13px;
+    padding: 6px 14px;
+    background-color: #1a1e27;
+    color: #8c95a6;
+    font-size: 12.5px;
     font-weight: 500;
-    border-radius: 6px 6px 0 0;
-    border: 1px solid #30363d;
+    border-radius: 5px 5px 0 0;
+    border: 1px solid #262c38;
     border-bottom: none;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.12s ease;
     white-space: nowrap;
+    height: 100%;
+    box-sizing: border-box;
 }
 
 .terminal-tab:hover {
-    background-color: #2b313a;
-    color: #c9d1d9;
+    background-color: #242a36;
+    color: #d8e0ed;
 }
 
 .terminal-tab.active {
-    background-color: #0d1117;
-    color: #58a6ff;
-    border-top: 2px solid #58a6ff;
+    background-color: #0b0d11;
+    color: #4da3ff;
+    border-top: 2px solid #4da3ff;
+    border-left: 1px solid #1f2530;
+    border-right: 1px solid #1f2530;
     font-weight: 600;
 }
 
 .terminal-tab .tab-icon {
     font-size: 11px;
-    opacity: 0.8;
+    opacity: 0.85;
 }
 
 .terminal-tab .tab-close {
-    font-size: 14px;
-    line-height: 1;
-    color: #8b949e;
+    font-size: 13px;
+    color: #8c95a6;
     margin-left: 4px;
     border-radius: 50%;
     padding: 1px 4px;
+    line-height: 1;
 }
 
 .terminal-tab .tab-close:hover {
-    background-color: rgba(248, 81, 73, 0.2);
+    background-color: rgba(248, 81, 73, 0.25);
     color: #f85149;
 }
 
 .btn-add-terminal {
-    background-color: #238636;
+    background-color: #1f6feb;
     color: #ffffff;
     border: none;
     border-radius: 4px;
-    padding: 5px 12px;
-    font-size: 12px;
+    padding: 4px 10px;
+    font-size: 11.5px;
     font-weight: 600;
     cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 6px;
-    margin-bottom: 6px;
+    gap: 5px;
     margin-left: 6px;
+    margin-bottom: 2px;
     transition: background-color 0.15s ease;
 }
 
 .btn-add-terminal:hover {
-    background-color: #2ea043;
-    color: #ffffff;
+    background-color: #388bfd;
 }
 
-/* Window Title Bar */
-.terminal-window-header {
+.terminal-top-right {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 8px 14px;
-    background-color: #161b22;
-    border-bottom: 1px solid #21262d;
-    color: #8b949e;
-    font-size: 12px;
-}
-
-.window-dots {
-    display: flex;
     gap: 6px;
-    align-items: center;
+    margin-bottom: 2px;
 }
 
-.dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    display: inline-block;
-}
-
-.dot-red { background-color: #ff5f56; }
-.dot-yellow { background-color: #ffbd2e; }
-.dot-green { background-color: #27c93f; }
-
-.window-title {
-    font-family: monospace;
-    font-size: 12px;
-    color: #c9d1d9;
-    font-weight: 500;
-}
-
-.window-actions {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.window-btn {
-    background: transparent;
-    border: 1px solid #30363d;
-    color: #8b949e;
+.term-tool-btn {
+    background: #181d26;
+    border: 1px solid #28303e;
+    color: #8c95a6;
     padding: 3px 8px;
     font-size: 11px;
     border-radius: 4px;
     cursor: pointer;
-    transition: all 0.15s ease;
+    transition: all 0.12s ease;
 }
 
-.window-btn:hover {
-    background: #21262d;
-    color: #f0f6fc;
-    border-color: #8b949e;
+.term-tool-btn:hover {
+    background: #232a37;
+    color: #ffffff;
+    border-color: #4da3ff;
 }
 
 /* Quick Commands Bar */
-.terminal-quick-bar {
+.terminal-quick-chips {
     display: flex;
     align-items: center;
-    gap: 6px;
-    padding: 6px 14px;
-    background-color: #0d1117;
-    border-bottom: 1px solid #21262d;
+    gap: 5px;
+    padding: 5px 12px;
+    background-color: #0e1117;
+    border-bottom: 1px solid #1a202c;
     overflow-x: auto;
     font-size: 11px;
+    flex-shrink: 0;
 }
 
-.quick-label {
-    color: #8b949e;
+.quick-chip-label {
+    color: #6e7687;
     font-weight: 600;
-    margin-right: 4px;
+    margin-right: 3px;
     white-space: nowrap;
 }
 
-.quick-cmd-btn {
-    background-color: #161b22;
-    border: 1px solid #30363d;
-    color: #58a6ff;
-    padding: 2px 8px;
-    border-radius: 12px;
+.quick-chip {
+    background-color: #161b24;
+    border: 1px solid #262e3d;
+    color: #4da3ff;
+    padding: 2px 7px;
+    border-radius: 10px;
     cursor: pointer;
     font-family: monospace;
     font-size: 11px;
     white-space: nowrap;
-    transition: all 0.15s ease;
+    transition: all 0.12s ease;
 }
 
-.quick-cmd-btn:hover {
-    background-color: #21262d;
-    border-color: #58a6ff;
-    color: #79c0ff;
+.quick-chip:hover {
+    background-color: #202735;
+    border-color: #4da3ff;
+    color: #70b7ff;
 }
 
-/* Screen / Console Body */
-.terminal-screen-container {
-    position: relative;
-    height: 520px;
-    background-color: #0d1117;
+/* Terminal Screen Content */
+.terminal-screen-full {
+    flex: 1;
     display: flex;
     flex-direction: column;
+    background-color: #0b0d11;
+    overflow: hidden;
 }
 
-.terminal-output {
+.terminal-console-output {
     flex: 1;
-    padding: 14px;
+    padding: 12px 16px;
     overflow-y: auto;
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
     font-size: 13px;
     line-height: 1.5;
-    color: #c9d1d9;
+    color: #d1d7e0;
     white-space: pre-wrap;
     word-break: break-all;
 }
 
-.terminal-output::-webkit-scrollbar {
-    width: 8px;
+.terminal-console-output::-webkit-scrollbar {
+    width: 7px;
 }
-.terminal-output::-webkit-scrollbar-thumb {
-    background: #30363d;
-    border-radius: 4px;
-}
-
-.term-banner {
-    color: #388bfd;
-    font-weight: bold;
-    margin-bottom: 12px;
+.terminal-console-output::-webkit-scrollbar-thumb {
+    background: #262c38;
+    border-radius: 3px;
 }
 
 .term-line-cmd {
-    color: #7ee787;
+    color: #56d364;
     font-weight: 600;
 }
 
@@ -371,28 +374,24 @@ include("head.inc");
     color: #f85149;
 }
 
-.term-line-out {
-    color: #e6edf3;
-}
-
-/* Input Row */
-.terminal-input-row {
+/* Bottom Input Row */
+.terminal-bottom-input {
     display: flex;
     align-items: center;
-    padding: 10px 14px;
-    background-color: #161b22;
-    border-top: 1px solid #30363d;
+    padding: 8px 14px;
+    background-color: #12151b;
+    border-top: 1px solid #1f2530;
     gap: 8px;
+    flex-shrink: 0;
 }
 
-.terminal-prompt-badge {
+.terminal-prompt-label {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
     font-family: monospace;
     font-size: 13px;
     font-weight: 700;
-    color: #7ee787;
+    color: #56d364;
     white-space: nowrap;
     user-select: none;
 }
@@ -401,7 +400,7 @@ include("head.inc");
     color: #79c0ff;
 }
 
-.terminal-input {
+.terminal-cmd-input {
     flex: 1;
     background: transparent;
     border: none;
@@ -410,16 +409,16 @@ include("head.inc");
     font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
     font-size: 13px;
     font-weight: 500;
-    caret-color: #58a6ff;
+    caret-color: #4da3ff;
 }
 
-.terminal-run-btn {
+.terminal-submit-btn {
     background-color: #238636;
     color: #ffffff;
     border: none;
-    padding: 5px 14px;
+    padding: 4px 12px;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 11.5px;
     font-weight: 600;
     cursor: pointer;
     display: inline-flex;
@@ -428,21 +427,21 @@ include("head.inc");
     transition: background-color 0.15s ease;
 }
 
-.terminal-run-btn:hover {
+.terminal-submit-btn:hover {
     background-color: #2ea043;
 }
 
-.terminal-status-spinner {
+.terminal-exec-spinner {
     display: none;
     color: #e3b341;
     font-size: 12px;
 }
 </style>
 
-<div class="terminal-page-container">
-    <div class="terminal-card">
-        <!-- Terminal Tabs Navigation -->
-        <div class="terminal-tabs-bar" id="term-tabs-bar">
+<div class="terminal-full-layout" id="terminal-layout">
+    <!-- Top Strip: Tabs + Controls -->
+    <div class="terminal-top-strip">
+        <div class="terminal-tabs-left" id="term-tabs-bar">
             <!-- Tabs injected dynamically via JS -->
             <button type="button" class="btn-add-terminal" id="btn-add-tab" title="<?=gettext("Buka Terminal Baru")?>">
                 <i class="fa-solid fa-plus"></i>
@@ -450,57 +449,45 @@ include("head.inc");
             </button>
         </div>
 
-        <!-- Terminal Window Controls -->
-        <div class="terminal-window-header">
-            <div class="window-dots">
-                <span class="dot dot-red" title="Close Session" id="btn-dot-close"></span>
-                <span class="dot dot-yellow" title="Clear Screen" id="btn-dot-clear"></span>
-                <span class="dot dot-green" title="Add Session" id="btn-dot-add"></span>
-            </div>
-            <div class="window-title" id="term-header-title">
-                root@pfSense [~]
-            </div>
-            <div class="window-actions">
-                <button type="button" class="window-btn" id="btn-font-dec" title="Kecilkan Font">A-</button>
-                <button type="button" class="window-btn" id="btn-font-inc" title="Besarkan Font">A+</button>
-                <button type="button" class="window-btn" id="btn-clear-term" title="Bersihkan Layar (Ctrl+L)">
-                    <i class="fa-solid fa-eraser"></i> <?=gettext("Clear")?>
-                </button>
-            </div>
+        <div class="terminal-top-right">
+            <button type="button" class="term-tool-btn" id="btn-font-dec" title="Kecilkan Font">A-</button>
+            <button type="button" class="term-tool-btn" id="btn-font-inc" title="Besarkan Font">A+</button>
+            <button type="button" class="term-tool-btn" id="btn-clear-term" title="Bersihkan Layar (Ctrl+L)">
+                <i class="fa-solid fa-eraser"></i> <?=gettext("Clear")?>
+            </button>
         </div>
+    </div>
 
-        <!-- Quick Shortcut Bar -->
-        <div class="terminal-quick-bar">
-            <span class="quick-label"><i class="fa-solid fa-bolt"></i> <?=gettext("Shortcut:")?></span>
-            <button type="button" class="quick-cmd-btn" data-cmd="uptime">uptime</button>
-            <button type="button" class="quick-cmd-btn" data-cmd="top -b -d 1">top</button>
-            <button type="button" class="quick-cmd-btn" data-cmd="ifconfig -a">ifconfig</button>
-            <button type="button" class="quick-cmd-btn" data-cmd="netstat -rn">routes</button>
-            <button type="button" class="quick-cmd-btn" data-cmd="pfctl -sr">pfctl rules</button>
-            <button type="button" class="quick-cmd-btn" data-cmd="pfctl -si">pfctl info</button>
-            <button type="button" class="quick-cmd-btn" data-cmd="ps aux">ps aux</button>
-            <button type="button" class="quick-cmd-btn" data-cmd="df -h">df -h</button>
-            <button type="button" class="quick-cmd-btn" data-cmd="dmesg | tail -n 25">dmesg</button>
-            <button type="button" class="quick-cmd-btn" data-cmd="uname -mrs">uname</button>
-        </div>
+    <!-- Quick Commands Bar -->
+    <div class="terminal-quick-chips">
+        <span class="quick-chip-label"><i class="fa-solid fa-bolt"></i> <?=gettext("FreeBSD:")?></span>
+        <button type="button" class="quick-chip" data-cmd="uptime">uptime</button>
+        <button type="button" class="quick-chip" data-cmd="top -b -d 1">top</button>
+        <button type="button" class="quick-chip" data-cmd="ifconfig -a">ifconfig</button>
+        <button type="button" class="quick-chip" data-cmd="netstat -rn">netstat</button>
+        <button type="button" class="quick-chip" data-cmd="pfctl -sr">pfctl rules</button>
+        <button type="button" class="quick-chip" data-cmd="pfctl -si">pfctl info</button>
+        <button type="button" class="quick-chip" data-cmd="ps aux">ps aux</button>
+        <button type="button" class="quick-chip" data-cmd="df -h">df -h</button>
+        <button type="button" class="quick-chip" data-cmd="dmesg | tail -n 25">dmesg</button>
+        <button type="button" class="quick-chip" data-cmd="uname -mrs">uname</button>
+    </div>
 
-        <!-- Terminal Output & Interactive Shell -->
-        <div class="terminal-screen-container" id="terminal-screen">
-            <div class="terminal-output" id="term-output"></div>
+    <!-- Terminal Screen Content -->
+    <div class="terminal-screen-full" id="terminal-screen">
+        <div class="terminal-console-output" id="term-output"></div>
 
-            <div class="terminal-input-row">
-                <div class="terminal-prompt-badge">
-                    <span>root@pfSense</span>
-                    <span>[<span class="terminal-prompt-cwd" id="term-prompt-cwd">~</span>]#</span>
-                </div>
-                <input type="text" class="terminal-input" id="term-input" autocomplete="off" spellcheck="false" placeholder="Ketik perintah shell di sini lalu tekan Enter..." />
-                <span class="terminal-status-spinner" id="term-spinner">
-                    <i class="fa-solid fa-circle-notch fa-spin"></i>
-                </span>
-                <button type="button" class="terminal-run-btn" id="btn-run-cmd">
-                    <i class="fa-solid fa-play"></i> <?=gettext("Jalankan")?>
-                </button>
+        <div class="terminal-bottom-input">
+            <div class="terminal-prompt-label">
+                <span>root@pfSense:</span><span class="terminal-prompt-cwd" id="term-prompt-cwd">~</span><span>&nbsp;#&nbsp;</span>
             </div>
+            <input type="text" class="terminal-cmd-input" id="term-input" autocomplete="off" spellcheck="false" placeholder="Ketik perintah FreeBSD shell di sini lalu tekan Enter..." />
+            <span class="terminal-exec-spinner" id="term-spinner">
+                <i class="fa-solid fa-circle-notch fa-spin"></i>
+            </span>
+            <button type="button" class="terminal-submit-btn" id="btn-run-cmd">
+                <i class="fa-solid fa-play"></i> <?=gettext("Run")?>
+            </button>
         </div>
     </div>
 </div>
@@ -513,14 +500,7 @@ events.push(function() {
     var nextSessionNum = 1;
     var currentFontSize = 13;
 
-    var BANNER_TEXT = 
-"  ___  __ ____                     _____                   _             _ \n" +
-" | _ \\/ _| ___|  ___ _ __  ___  ___|_   _|__ _ _ _ __ ___ (_)_ _  __ _ | |\n" +
-" |  _/  _\\___ \\ / -_) '  \\(_-< / -_) | |/ -_) '_| '  \\/ _ \\| | ' \\/ _` || |\n" +
-" |_| |_| |____/ \\___|_|_|_/__/ \\___| |_|\\___|_| |_|_|_\\___/|_|_||_\\__,_||_|\n\n" +
-"  pfSense Interactive Web Terminal (FreeBSD)\n" +
-"  Ketik perintah shell atau gunakan '+ Tambah Terminal' untuk sesi baru.\n" +
-"  ========================================================================\n\n";
+    var FREEBSD_SYSTEM_BANNER = <?=json_encode($freebsd_banner)?>;
 
     // Escape HTML string
     function escapeHtml(text) {
@@ -539,7 +519,7 @@ events.push(function() {
         str = str.replace(/\033\[0?m/g, '</span>');
         str = str.replace(/\033\[0?1m/g, '<span style="font-weight: bold;">');
         str = str.replace(/\033\[31m/g, '<span style="color: #f85149;">'); // Red
-        str = str.replace(/\033\[32m/g, '<span style="color: #7ee787;">'); // Green
+        str = str.replace(/\033\[32m/g, '<span style="color: #56d364;">'); // Green
         str = str.replace(/\033\[33m/g, '<span style="color: #e3b341;">'); // Yellow
         str = str.replace(/\033\[34m/g, '<span style="color: #58a6ff;">'); // Blue
         str = str.replace(/\033\[35m/g, '<span style="color: #bc8cff;">'); // Magenta
@@ -551,7 +531,6 @@ events.push(function() {
         return str;
     }
 
-    // Get Active Session Object
     function getActiveSession() {
         for (var i = 0; i < sessions.length; i++) {
             if (sessions[i].id === activeSessionId) {
@@ -561,7 +540,6 @@ events.push(function() {
         return null;
     }
 
-    // Render Tabs Bar
     function renderTabs() {
         var $bar = $('#term-tabs-bar');
         $bar.find('.terminal-tab').remove();
@@ -576,13 +554,11 @@ events.push(function() {
                 '</div>'
             );
 
-            // Tab click -> switch active
             $tab.on('click', function(e) {
                 if ($(e.target).hasClass('tab-close')) return;
                 switchSession(s.id);
             });
 
-            // Close tab click
             $tab.find('.tab-close').on('click', function(e) {
                 e.stopPropagation();
                 closeSession(s.id);
@@ -594,7 +570,6 @@ events.push(function() {
         updateHeaderAndPrompt();
     }
 
-    // Update Header title and prompt cwd display
     function updateHeaderAndPrompt() {
         var s = getActiveSession();
         if (!s) return;
@@ -602,7 +577,6 @@ events.push(function() {
         var displayCwd = s.cwd;
         if (displayCwd === '/root') displayCwd = '~';
 
-        $('#term-header-title').text(s.name + ' — root@pfSense: ' + displayCwd);
         $('#term-prompt-cwd').text(displayCwd);
         $('#term-output').html(s.content);
         scrollOutputToBottom();
@@ -615,7 +589,6 @@ events.push(function() {
         }
     }
 
-    // Create New Terminal Session
     function createSession() {
         var num = nextSessionNum++;
         var newSession = {
@@ -624,27 +597,24 @@ events.push(function() {
             cwd: '/root',
             history: [],
             historyIdx: -1,
-            content: ansiToHtml(BANNER_TEXT)
+            content: ansiToHtml(FREEBSD_SYSTEM_BANNER)
         };
 
         sessions.push(newSession);
         switchSession(newSession.id);
     }
 
-    // Switch Active Session
     function switchSession(id) {
         activeSessionId = id;
         renderTabs();
         $('#term-input').focus();
     }
 
-    // Close Terminal Session
     function closeSession(id) {
         if (sessions.length <= 1) {
-            // Jika hanya tinggal 1, bersihkan saja
             var s = getActiveSession();
             if (s) {
-                s.content = ansiToHtml(BANNER_TEXT);
+                s.content = ansiToHtml(FREEBSD_SYSTEM_BANNER);
                 s.cwd = '/root';
                 s.historyIdx = -1;
                 updateHeaderAndPrompt();
@@ -670,7 +640,6 @@ events.push(function() {
         }
     }
 
-    // Execute Command in Active Session
     function executeCommand(cmdStr) {
         var s = getActiveSession();
         if (!s) return;
@@ -678,14 +647,13 @@ events.push(function() {
         var cmd = (cmdStr !== undefined) ? cmdStr.trim() : $('#term-input').val().trim();
         if (cmd === '') return;
 
-        // Push to session history
         if (s.history[s.history.length - 1] !== cmd) {
             s.history.push(cmd);
         }
         s.historyIdx = s.history.length;
 
         var displayCwd = s.cwd === '/root' ? '~' : s.cwd;
-        var promptLine = '<span class="term-line-cmd">root@pfSense [' + escapeHtml(displayCwd) + ']# ' + escapeHtml(cmd) + '</span>\n';
+        var promptLine = '<span class="term-line-cmd">root@pfSense:' + escapeHtml(displayCwd) + ' # ' + escapeHtml(cmd) + '</span>\n';
         s.content += promptLine;
         $('#term-output').html(s.content);
         scrollOutputToBottom();
@@ -727,15 +695,14 @@ events.push(function() {
             error: function(xhr, status, err) {
                 $('#term-spinner').hide();
                 $('#btn-run-cmd').prop('disabled', false);
-                s.content += '<span class="term-line-err">Error AJAX: ' + escapeHtml(err || status) + '</span>\n';
+                s.content += '<span class="term-line-err">Error: ' + escapeHtml(err || status) + '</span>\n';
                 updateHeaderAndPrompt();
                 $('#term-input').focus();
             }
         });
     }
 
-    // Setup Event Listeners
-    $('#btn-add-tab, #btn-dot-add').on('click', function() {
+    $('#btn-add-tab').on('click', function() {
         createSession();
     });
 
@@ -743,7 +710,6 @@ events.push(function() {
         executeCommand();
     });
 
-    // Enter Key & Arrow History
     $('#term-input').on('keydown', function(e) {
         var s = getActiveSession();
         if (!s) return;
@@ -780,8 +746,7 @@ events.push(function() {
         }
     });
 
-    // Clear Button
-    $('#btn-clear-term, #btn-dot-clear').on('click', function() {
+    $('#btn-clear-term').on('click', function() {
         var s = getActiveSession();
         if (s) {
             s.content = '';
@@ -790,22 +755,13 @@ events.push(function() {
         }
     });
 
-    // Close Dot
-    $('#btn-dot-close').on('click', function() {
-        if (activeSessionId) {
-            closeSession(activeSessionId);
-        }
-    });
-
-    // Quick Command Buttons
-    $('.quick-cmd-btn').on('click', function() {
+    $('.quick-chip').on('click', function() {
         var cmd = $(this).data('cmd');
         if (cmd) {
             executeCommand(cmd);
         }
     });
 
-    // Font size adjustments
     $('#btn-font-inc').on('click', function() {
         if (currentFontSize < 20) {
             currentFontSize++;
@@ -820,14 +776,12 @@ events.push(function() {
         }
     });
 
-    // Click anywhere on terminal screen -> focus input
     $('#terminal-screen').on('click', function(e) {
         if (!$(e.target).closest('button').length) {
             $('#term-input').focus();
         }
     });
 
-    // Inisialisasi Terminal Pertama
     createSession();
 });
 //]]>
