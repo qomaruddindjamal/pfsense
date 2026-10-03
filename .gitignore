@@ -37,9 +37,8 @@ scratch/
 # Base archive (> 100MB)
 installer_source/usr/local/share/pfSense/base.txz
 
-# Large package source archives
-packages/aapanel/bundle/
+# Local development, test and build scripts (kept locally only)
+scripts/
 
-# Package build outputs and binaries (kept in installer_source/packages/All/)
-packages/pkg/
-packages/**/*.pkg
+# Root package sources and build outputs (kept locally only)
+packages/
