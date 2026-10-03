@@ -15,20 +15,23 @@
 
 ---
 
-Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO, integrasi paket **WireGuard** dan **Xray-core** (VLESS, VMess, Trojan, Socks5, TUN, Routing), panduan **aaPanel**, serta skrip otomatisasi untuk **mengganti / menimpa Linux VPS yang sedang berjalan menjadi pfSense**.
+Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO, integrasi paket **WireGuard**, **Xray-core** (VLESS, VMess, Trojan, Socks5, TUN, Routing), **Speedtest** (Official Ookla CLI + WebGUI Tool & Widget), **Wifi Manager** (AP & Station), panduan **aaPanel KVM**, serta skrip otomatisasi untuk **mengganti / menimpa Linux VPS yang sedang berjalan menjadi pfSense**.
 
 ---
 
 ## 🚀 Fitur Utama
 
 1. **Paket Instalasi Offline ke Dalam ISO**:
-   - Seluruh paket (`wireguard-pfsense.pkg`, `xray-pfsense.pkg`, dan `kvm.pkg`) telah disisipkan ke dalam direktori offline installer (`/usr/local/share/packages/offline/`).
-   - Hook instalasi otomatis disematkan pada `installer_source/usr/local/libexec/installer/pfSense-post-install` sehingga saat instalasi dari ISO selesai, ketiga paket otomatis terpasang tanpa memerlukan koneksi internet.
+   - Seluruh 5 paket offline (`wireguard-pfsense.pkg`, `xray-pfsense.pkg`, `speedtest.pkg`, `wifi.pkg`, dan `kvm.pkg`) telah disisipkan ke dalam direktori offline installer (`/usr/local/share/packages/offline/`).
+   - Hook instalasi otomatis disematkan pada `installer_source/usr/local/libexec/installer/pfSense-install` dan `pfSense-post-install` sehingga saat instalasi dari ISO selesai, seluruh paket otomatis terpasang tanpa memerlukan koneksi internet.
+   - File ISO bootable offline: `pfsense-custom-offline-installer.iso` (4.6 GB).
    - Tersedia skrip remaster ISO: `scripts/remaster_iso.sh`.
 
 2. **Integrasi Menu WebGUI pfSense**:
-   - **VPN > WireGuard** (`/vpn_wg.php`): Mengelola interface `wg0`, status handshake, generate keypair, dan konfigurasi peer.
+   - **VPN > WireGuard** (`/vpn_wg.php`): Mengelola interface `wg0`, status handshake, generate keypair, konfigurasi peer, dan full routing.
    - **VPN > Xray-core** (`/vpn_xray.php`): Mengelola daemon Xray, kontrol status, editor `config.json` multi-protokol (VLESS, VMess, Trojan, Socks5, TUN, Routing), dan pemantau log error.
+   - **Tools > Speedtest** (`/tools_speedtest.php`): Pengujian throughput bandwidth & latency multi-stream resmi Ookla & Python CLI, dukungan pengujian per-interface (WAN, LAN Outbound NAT, WireGuard VPN), riwayat pengujian, dan widget dashboard (`speedtest.widget.php`).
+   - **Interfaces > Wifi** (`/interfaces_wifi.php`): Pengelolaan access point (AP), Virtual AP (VAP), scanning SSID, dan konfigurasi interface nirkabel.
    - **aaPanel Mandiri (Tanpa Menu di pfSense)**: Sesuai rancangan, aaPanel **TIDAK** ditampilkan di WebGUI pfSense karena aaPanel telah memiliki antarmuka WebGUI modern tersendiri (port 8888).
 
 3. **WireGuard VPN**:
