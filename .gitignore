@@ -37,8 +37,13 @@ scratch/
 # Base archive (> 100MB)
 installer_source/usr/local/share/pfSense/base.txz
 
-# Local development, test and build scripts (kept locally only)
-scripts/
+# Local development, test and build scripts (hanya 5 skrip utama yang dipublikasikan)
+scripts/*
+!scripts/build_pkg.py
+!scripts/remaster_iso.sh
+!scripts/install-pfsense-from-linux.sh
+!scripts/setup-pfsense-all.sh
+!scripts/config.xml.template
 
 # Root package sources and build outputs (kept locally only)
 packages/
