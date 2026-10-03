@@ -109,9 +109,9 @@ if (is_numeric($_REQUEST['serverid'])) {
 ?>
 <table class="table">
 	<tr>
-		<td><h4>Ping <i class="fa fa-exchange"></h4></td>
-		<td><h4>Download <i class="fa fa-download"></i></h4></td>
-		<td><h4>Upload <i class="fa fa-upload"></h4></td>
+		<td><h4>Ping <i class="fa-solid fa-exchange-alt"></i></h4></td>
+		<td><h4>Download <i class="fa-solid fa-download"></i></h4></td>
+		<td><h4>Upload <i class="fa-solid fa-upload"></i></h4></td>
 	</tr>
 	<tr>
 		<td><h4 id="speedtest-ping">N/A</h4></td>
@@ -155,9 +155,16 @@ if (is_numeric($_REQUEST['serverid'])) {
 	<tr>
 		<td colspan="3" id="speedtest-ts" style="font-size: 0.8em;">&nbsp;</td>
 	</tr>
+	<tr>
+		<td colspan="3" style="text-align: center; padding: 10px 0;">
+			<button type="button" id="btn-widget-speedtest" class="btn btn-sm btn-primary" onclick="update_speedtest(); return false;">
+				<i class="fa-solid fa-play"></i> <?=gettext("Run Speedtest")?>
+			</button>
+		</td>
+	</tr>
 </table>
-<a id="updspeed" href="#" class="fa fa-refresh" style="display: none;"></a>
-<a id="Ookla" href="#" target="_blank" style="display: none;"> <i class="fa fa-external-link"></i></a>
+<a id="updspeed" href="#" class="fa-solid fa-rotate" style="display: none;"></a>
+<a id="Ookla" href="#" target="_blank" style="display: none;"> <i class="fa-solid fa-arrow-up-right-from-square"></i></a>
 <script type="text/javascript">
 function update_result(results) {
     if(results != null) {
@@ -237,18 +244,25 @@ function update_result(results) {
 }
 
 function update_speedtest() {
+    var btn = $('#btn-widget-speedtest');
+    btn.prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Testing...');
     $('#updspeed').off("click").blur().addClass("fa-spin").click(function() {
         $('#updspeed').blur();
         return false;
     });
+    var postData = {
+        serverid: $( "#speedtest-host option:selected" ).val() || 0,
+        iface: $( "#speedtest-iface option:selected" ).val() || '0.0.0.0'
+    };
+    if (typeof csrfMagicToken !== 'undefined') {
+        postData.__csrf_magic = csrfMagicToken;
+    }
     $.ajax({
         type: 'POST',
         url: "/widgets/widgets/speedtest.widget.php",
         dataType: 'json',
-        data: {
-            serverid: $( "#speedtest-host option:selected" ).val(),
-            iface: $( "#speedtest-iface option:selected" ).val()
-        },
+        data: postData,
+        timeout: 120000,
         success: function(data) {
             update_result(data);
         },
@@ -256,6 +270,7 @@ function update_speedtest() {
             update_result(null);
         },
         complete: function() {
+            btn.prop('disabled', false).html('<i class="fa-solid fa-play"></i> Run Speedtest');
             $('#updspeed').off("click").removeClass("fa-spin").click(function() {
                 update_speedtest();
                 return false;
@@ -268,6 +283,10 @@ events.push(function() {
 	$("#Ookla").prependTo(target);
 	$("#updspeed").prependTo(target).show();
     $('#updspeed').click(function() {
+        update_speedtest();
+        return false;
+    });
+    $('#btn-widget-speedtest').click(function() {
         update_speedtest();
         return false;
     });

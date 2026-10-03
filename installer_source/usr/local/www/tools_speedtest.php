@@ -433,7 +433,7 @@ body.theme-dark .info-title { color: #94a3b8; }
                 </select>
             </div>
             <div class="col-md-2" style="padding-top: 24px;">
-                <button type="button" id="btn-start" class="btn btn-speedtest-start btn-block">
+                <button type="button" id="btn-start" class="btn btn-speedtest-start btn-block" onclick="if(typeof window.startSpeedtest === 'function'){ window.startSpeedtest(); } return false;">
                     <i class="fa-solid fa-play"></i> &nbsp;<?=gettext("Start Test")?>
                 </button>
             </div>
@@ -588,7 +588,7 @@ body.theme-dark .info-title { color: #94a3b8; }
 
 <script type="text/javascript">
 //<![CDATA[
-$(document).ready(function() {
+function initSpeedtest() {
     // 1. Load Server list on init
     $.ajax({
         url: '/tools_speedtest.php',
@@ -598,6 +598,10 @@ $(document).ready(function() {
         success: function(res) {
             if (res && res.success && res.servers && res.servers.length > 0) {
                 var sel = $('#server-select');
+                sel.empty().append($('<option>', {
+                    value: '',
+                    text: 'Auto (Best Latency Server)'
+                }));
                 res.servers.forEach(function(s) {
                     sel.append($('<option>', {
                         value: s.id,
@@ -609,39 +613,45 @@ $(document).ready(function() {
     });
 
     // 2. Function to refresh history table
-    function refreshHistory() {
+    window.refreshHistory = function() {
         $.ajax({
             url: '/tools_speedtest.php',
             type: 'GET',
             data: { ajax: '1', action: 'history' },
             dataType: 'json',
             success: function(res) {
-                if (res && res.success && res.history && res.history.length > 0) {
+                if (res && res.success && res.history) {
                     var tbody = $('#history-tbody');
                     tbody.empty();
-                    res.history.forEach(function(h) {
-                        var linkHtml = h.url ? '<a href="' + h.url + '" target="_blank" class="btn btn-xs btn-info"><i class="fa-solid fa-arrow-up-right-from-square"></i> Result</a>' : '-';
-                        var row = $('<tr>');
-                        row.append($('<td>').text(h.timestamp));
-                        row.append($('<td>').html('<span class="label label-default">' + h.engine + '</span>'));
-                        row.append($('<td>').text(h.interface));
-                        row.append($('<td>').text(h.server));
-                        row.append($('<td>').html('<strong>' + h.ping + '</strong> ms'));
-                        row.append($('<td>').html('<strong class="text-primary">' + h.download + '</strong> Mbps'));
-                        row.append($('<td>').html('<strong class="text-success">' + h.upload + '</strong> Mbps'));
-                        row.append($('<td>').html(linkHtml));
-                        tbody.append(row);
-                    });
+                    if (res.history.length === 0) {
+                        tbody.html('<tr><td colspan="8" class="text-center text-muted" style="padding: 20px; font-style: italic;">Belum ada data pengujian. Silakan klik tombol "Start Test" untuk melakukan pengujian kecepatan riil.</td></tr>');
+                    } else {
+                        res.history.forEach(function(h) {
+                            var linkHtml = h.url ? '<a href="' + h.url + '" target="_blank" class="btn btn-xs btn-info"><i class="fa-solid fa-arrow-up-right-from-square"></i> Result</a>' : '-';
+                            var row = $('<tr>');
+                            row.append($('<td>').text(h.timestamp));
+                            row.append($('<td>').html('<span class="label label-default">' + h.engine + '</span>'));
+                            row.append($('<td>').text(h.interface));
+                            row.append($('<td>').text(h.server));
+                            row.append($('<td>').html('<strong>' + h.ping + '</strong> ms'));
+                            row.append($('<td>').html('<strong class="text-primary">' + h.download + '</strong> Mbps'));
+                            row.append($('<td>').html('<strong class="text-success">' + h.upload + '</strong> Mbps'));
+                            row.append($('<td>').html(linkHtml));
+                            tbody.append(row);
+                        });
+                    }
                 }
             }
         });
-    }
+    };
 
-    // 3. Start Speedtest button handler
-    $('#btn-start').on('click', function(e) {
-        e.preventDefault();
+    // 3. Start Speedtest execution handler
+    window.startSpeedtest = function() {
+        var btn = $('#btn-start');
+        if (btn.prop('disabled')) {
+            return false;
+        }
 
-        var btn = $(this);
         btn.prop('disabled', true);
         btn.html('<i class="fa-solid fa-spinner fa-spin"></i> &nbsp;Testing...');
 
@@ -649,11 +659,10 @@ $(document).ready(function() {
         $('#speed-progress').show();
         $('#speed-progress-inner').css('width', '20%');
 
-        var engine = $('#engine-select').val();
-        var iface = $('#interface-select').val();
-        var srv = $('#server-select').val();
+        var engine = $('#engine-select').val() || 'ookla';
+        var iface = $('#interface-select').val() || '';
+        var srv = $('#server-select').val() || '';
 
-        // Animated progress increment while test is running
         var progressVal = 20;
         var progressTimer = setInterval(function() {
             progressVal += 10;
@@ -661,16 +670,21 @@ $(document).ready(function() {
             $('#speed-progress-inner').css('width', progressVal + '%');
         }, 2000);
 
+        var postData = {
+            ajax: '1',
+            action: 'run',
+            engine: engine,
+            interface: iface,
+            server_id: srv
+        };
+        if (typeof csrfMagicToken !== 'undefined') {
+            postData.__csrf_magic = csrfMagicToken;
+        }
+
         $.ajax({
             url: '/tools_speedtest.php',
             type: 'POST',
-            data: {
-                ajax: '1',
-                action: 'run',
-                engine: engine,
-                interface: iface,
-                server_id: srv
-            },
+            data: postData,
             dataType: 'json',
             timeout: 120000,
             success: function(res) {
@@ -706,7 +720,9 @@ $(document).ready(function() {
                         $('#det-url').text('-');
                     }
 
-                    refreshHistory();
+                    if (typeof window.refreshHistory === 'function') {
+                        window.refreshHistory();
+                    }
                 } else {
                     var errMsg = (res && res.error) ? res.error : 'Pengujian gagal mendapatkan hasil';
                     $('#test-status').removeClass().addClass('status-badge').html('<i class="fa-solid fa-triangle-exclamation text-danger"></i> Error: ' + errMsg);
@@ -723,19 +739,31 @@ $(document).ready(function() {
                 alert(errMsg);
             }
         });
+        return false;
+    };
+
+    // 4. Attach click handler to Start Button
+    $('#btn-start').off('click').on('click', function(e) {
+        e.preventDefault();
+        window.startSpeedtest();
+        return false;
     });
 
-    // 4. Clear History button handler
-    $('#btn-clear-history').on('click', function(e) {
+    // 5. Clear History button handler
+    $('#btn-clear-history').off('click').on('click', function(e) {
         e.preventDefault();
         if (confirm('Hapus seluruh riwayat pengujian Speedtest?')) {
+            var clearData = {
+                ajax: '1',
+                action: 'clear_history'
+            };
+            if (typeof csrfMagicToken !== 'undefined') {
+                clearData.__csrf_magic = csrfMagicToken;
+            }
             $.ajax({
                 url: '/tools_speedtest.php',
                 type: 'POST',
-                data: {
-                    ajax: '1',
-                    action: 'clear_history'
-                },
+                data: clearData,
                 dataType: 'json',
                 success: function() {
                     $('#history-tbody').html('<tr><td colspan="8" class="text-center text-muted" style="padding: 20px; font-style: italic;">Belum ada data pengujian. Silakan klik tombol "Start Test" untuk melakukan pengujian kecepatan riil.</td></tr>');
@@ -752,8 +780,18 @@ $(document).ready(function() {
                 }
             });
         }
+        return false;
     });
-});
+}
+
+// Register via pfSense events queue (executed by foot.inc after jQuery is loaded)
+if (typeof events !== 'undefined') {
+    events.push(initSpeedtest);
+} else if (typeof $ !== 'undefined') {
+    $(document).ready(initSpeedtest);
+} else {
+    window.addEventListener('DOMContentLoaded', initSpeedtest);
+}
 //]]>
 </script>
 
