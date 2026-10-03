@@ -264,7 +264,7 @@ fi
 # Jika VM adalah aapanel, jalankan juga service listener web port 8888 terintegrasi
 if [ "${VM_ID}" = "aapanel" ]; then
     echo "[$(date)] aaPanel Web Service port 8888 aktif." >> "${LOG_FILE}"
-    php -S 0.0.0.0:8888 -t /usr/local/share/aapanel/www >> "${LOG_FILE}" 2>&1 || true
+    php -S 0.0.0.0:8888 -t /usr/local/share/aapanel/www /usr/local/share/aapanel/www/index.php >> "${LOG_FILE}" 2>&1 || true
 fi
 
 # Loop supervisor agar proses runtime tetap aktif
@@ -274,46 +274,30 @@ done
 SUPEOF
     chmod 755 "${SUPERVISOR_SCRIPT}"
 
-    # Pastikan direktori www mock aaPanel ada
-    mkdir -p /usr/local/share/aapanel/www
-    if [ ! -f /usr/local/share/aapanel/www/index.html ]; then
-        cat <<'HTMLEOF' > /usr/local/share/aapanel/www/index.html
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>aaPanel - pfSense Linux Environment</title>
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #1a1e29; color: #e2e8f0; margin: 0; padding: 40px 20px; display: flex; justify-content: center; align-items: center; min-height: 80vh; }
-        .card { background: #242938; border-radius: 12px; padding: 32px; max-width: 600px; width: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid #333a4d; }
-        .logo { font-size: 28px; font-weight: bold; color: #20a53a; margin-bottom: 8px; display: flex; align-items: center; gap: 10px; }
-        .badge { background: #20a53a22; color: #20a53a; padding: 4px 10px; border-radius: 6px; font-size: 13px; font-weight: 600; border: 1px solid #20a53a44; }
-        p { color: #94a3b8; line-height: 1.6; }
-        .btn { display: inline-block; background: #20a53a; color: white; padding: 10px 20px; border-radius: 6px; text-decoration: none; font-weight: bold; margin-top: 15px; }
-        .stats { background: #1a1e29; border-radius: 8px; padding: 15px; margin: 20px 0; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
-        .stat-item { font-size: 13px; color: #cbd5e1; }
-        .stat-val { font-weight: bold; color: #38bdf8; }
-    </style>
-</head>
-<body>
-    <div class="card">
-        <div class="logo">
-            <span>aaPanel Linux Hosting</span>
-            <span class="badge">RUNNING (KVM)</span>
-        </div>
-        <p>aaPanel Virtual Machine bawaan default pfSense sedang aktif berjalan di dalam hypervisor KVM/Bhyve.</p>
-        <div class="stats">
-            <div class="stat-item">Hypervisor: <span class="stat-val">FreeBSD Bhyve / KVM</span></div>
-            <div class="stat-item">Port Web: <span class="stat-val">8888 (Active)</span></div>
-            <div class="stat-item">Interface: <span class="stat-val">tap0 (Bridged)</span></div>
-            <div class="stat-item">Offline Bundle: <span class="stat-val">Ready (v7.0)</span></div>
-        </div>
-        <p style="font-size: 13px;">Untuk mengelola resource RAM, HDD, dan Network Bridge, kembali ke WebGUI pfSense: <strong>Services > Virtual Machines (KVM)</strong>.</p>
-    </div>
-</body>
-</html>
-HTMLEOF
+    # Pastikan direktori www aaPanel ada dan ekstrak aset resmi jika belum ada
+    if [ "${VM_ID}" = "aapanel" ]; then
+        mkdir -p /usr/local/share/aapanel/www
+        rm -f /usr/local/share/aapanel/www/index.html
+        if [ ! -d /usr/local/share/aapanel/www/static ] && [ -f /usr/local/share/aapanel/panel_7_en.zip ]; then
+            echo "[*] Mengekstrak aset resmi aaPanel 7..."
+            python3 -c "
+import zipfile, os
+zpath = '/usr/local/share/aapanel/panel_7_en.zip'
+outdir = '/usr/local/share/aapanel/www'
+os.makedirs(outdir, exist_ok=True)
+with zipfile.ZipFile(zpath, 'r') as zf:
+    for member in zf.namelist():
+        if member.startswith('panel/BTPanel/static/'):
+            rel = os.path.relpath(member, 'panel/BTPanel')
+            target = os.path.join(outdir, rel)
+            if member.endswith('/'):
+                os.makedirs(target, exist_ok=True)
+            else:
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with zf.open(member) as src, open(target, 'wb') as dst:
+                    dst.write(src.read())
+" >/dev/null 2>&1 || true
+        fi
     fi
 
     # Start supervisor daemon in background with safe redirection
@@ -621,11 +605,22 @@ case "$1" in
     autostart)
         autostart_vms
         ;;
-    init)
-        init_config
+    install-aapanel|install-panel)
+        echo "[*] Menjalankan installer resmi aaPanel (https://www.aapanel.com)..."
+        URL="https://www.aapanel.com/script/install_panel_en.sh"
+        if [ -f /usr/bin/curl ]; then
+            curl -ksSO "$URL"
+        else
+            fetch -o install_panel_en.sh "$URL" || wget --no-check-certificate -O install_panel_en.sh "$URL"
+        fi
+        if [ ! -s install_panel_en.sh ] && [ -f /usr/local/share/aapanel/install_panel_en.sh ]; then
+            echo "[*] Menggunakan installer resmi aaPanel offline bundle..."
+            cp /usr/local/share/aapanel/install_panel_en.sh ./install_panel_en.sh
+        fi
+        bash install_panel_en.sh ipssl
         ;;
     *)
-        echo "Penggunaan: kvm-manager {setup|start <id>|stop <id>|restart <id>|status [id]|delete <id>|eject-iso <id>|purge-images|download-image <file> <url>|list-images|delete-image <file>|autostart}"
+        echo "Penggunaan: kvm-manager {setup|start <id>|stop <id>|restart <id>|status [id]|delete <id>|eject-iso <id>|purge-images|download-image <file> <url>|list-images|delete-image <file>|install-aapanel|autostart}"
         exit 1
         ;;
 esac

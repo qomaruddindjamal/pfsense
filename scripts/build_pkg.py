@@ -302,42 +302,7 @@ def build_kvm():
     shutil.copy2(PACKAGES_DIR / "aapanel/usr/local/etc/rc.d/kvm", staging / "usr/local/etc/rc.d/kvm")
 
     # CLI command aapanel-pfsense
-    cli_sh = """#!/bin/sh
-# aaPanel Integration & Bhyve Manager for pfSense
-case "$1" in
-  setup-bhyve|setup)
-    /usr/local/bin/kvm-manager setup
-    ;;
-  start)
-    /usr/local/bin/kvm-manager start aapanel
-    ;;
-  stop)
-    /usr/local/bin/kvm-manager stop aapanel
-    ;;
-  restart)
-    /usr/local/bin/kvm-manager restart aapanel
-    ;;
-  status)
-    /usr/local/bin/kvm-manager status aapanel
-    ;;
-  install-linux)
-    echo "[*] Menjalankan installer resmi aaPanel di sistem Linux..."
-    URL="https://www.aapanel.com/script/install_7.0_en.sh"
-    if [ -f /usr/bin/curl ]; then
-        curl -ksSO "$URL"
-    else
-        fetch -o install_7.0_en.sh "$URL" || wget --no-check-certificate -O install_7.0_en.sh "$URL"
-    fi
-    bash install_7.0_en.sh aapanel
-    ;;
-  *)
-    echo "Penggunaan: aapanel-pfsense {setup|start|stop|restart|status|install-linux}"
-    exit 1
-    ;;
-esac
-"""
-    with open(staging / "usr/local/bin/aapanel-pfsense", "w", newline="\n", encoding="utf-8") as f:
-        f.write(cli_sh)
+    shutil.copy2(PACKAGES_DIR / "aapanel/usr/local/bin/aapanel-pfsense", staging / "usr/local/bin/aapanel-pfsense")
 
     # Salin seluruh bundle offline aaPanel (panel_7_en.zip, bt7_en.init, dll) ke dalam paket
     bundle_dir = PACKAGES_DIR / "aapanel/bundle"
@@ -345,6 +310,13 @@ esac
         for bfile in bundle_dir.iterdir():
             if bfile.is_file():
                 shutil.copy2(bfile, staging / "usr/local/share/aapanel" / bfile.name)
+
+    # Salin web engine dan antarmuka resmi aaPanel
+    www_src = PACKAGES_DIR / "aapanel/usr/local/share/aapanel/www"
+    www_dst = staging / "usr/local/share/aapanel/www"
+    www_dst.mkdir(parents=True, exist_ok=True)
+    if (www_src / "index.php").exists():
+        shutil.copy2(www_src / "index.php", www_dst / "index.php")
 
     # Inisialisasi default vms.json
     conf_vms = """{
@@ -377,6 +349,25 @@ chmod 755 /usr/local/bin/kvm-manager /usr/local/bin/aapanel-pfsense /usr/local/e
 /usr/local/bin/kvm-manager setup >/dev/null 2>&1 || true
 if ! grep -q 'kvm_enable="YES"' /etc/rc.conf.local 2>/dev/null; then
     echo 'kvm_enable="YES"' >> /etc/rc.conf.local
+fi
+if [ -f /usr/local/share/aapanel/panel_7_en.zip ] && [ ! -d /usr/local/share/aapanel/www/static ]; then
+    python3 -c "
+import zipfile, os
+zpath = '/usr/local/share/aapanel/panel_7_en.zip'
+outdir = '/usr/local/share/aapanel/www'
+os.makedirs(outdir, exist_ok=True)
+with zipfile.ZipFile(zpath, 'r') as zf:
+    for member in zf.namelist():
+        if member.startswith('panel/BTPanel/static/'):
+            rel = os.path.relpath(member, 'panel/BTPanel')
+            target = os.path.join(outdir, rel)
+            if member.endswith('/'):
+                os.makedirs(target, exist_ok=True)
+            else:
+                os.makedirs(os.path.dirname(target), exist_ok=True)
+                with zf.open(member) as src, open(target, 'wb') as dst:
+                    dst.write(src.read())
+" >/dev/null 2>&1 || true
 fi
 echo "[✓] KVM & aaPanel default Virtual Machine package terpasang! Kelola di WebGUI: Services > Virtual Machines (KVM)"
 """

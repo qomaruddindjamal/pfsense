@@ -1,0 +1,40 @@
+#!/bin/sh
+# aaPanel Integration & Bhyve Manager for pfSense
+# Official aaPanel Installer command:
+# URL=https://www.aapanel.com/script/install_panel_en.sh && if [ -f /usr/bin/curl ];then curl -ksSO $URL ;else wget --no-check-certificate -O install_panel_en.sh $URL;fi;bash install_panel_en.sh ipssl
+
+case "$1" in
+  setup-bhyve|setup)
+    /usr/local/bin/kvm-manager setup
+    ;;
+  start)
+    /usr/local/bin/kvm-manager start aapanel
+    ;;
+  stop)
+    /usr/local/bin/kvm-manager stop aapanel
+    ;;
+  restart)
+    /usr/local/bin/kvm-manager restart aapanel
+    ;;
+  status)
+    /usr/local/bin/kvm-manager status aapanel
+    ;;
+  install-linux|install-official|install)
+    echo "[*] Menjalankan installer resmi aaPanel (https://www.aapanel.com)..."
+    URL="https://www.aapanel.com/script/install_panel_en.sh"
+    if [ -f /usr/bin/curl ]; then
+        curl -ksSO "$URL"
+    else
+        fetch -o install_panel_en.sh "$URL" || wget --no-check-certificate -O install_panel_en.sh "$URL"
+    fi
+    if [ ! -s install_panel_en.sh ] && [ -f /usr/local/share/aapanel/install_panel_en.sh ]; then
+        echo "[*] Menggunakan installer resmi aaPanel offline bundle..."
+        cp /usr/local/share/aapanel/install_panel_en.sh ./install_panel_en.sh
+    fi
+    bash install_panel_en.sh ipssl
+    ;;
+  *)
+    echo "Penggunaan: aapanel-pfsense {setup|start|stop|restart|status|install-linux}"
+    exit 1
+    ;;
+esac

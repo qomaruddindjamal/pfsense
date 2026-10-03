@@ -552,7 +552,11 @@ display_top_tabs($tab_array);
                 <div class="alert alert-info">
                     <i class="fa-solid fa-circle-info"></i>
                     <strong><?= gettext("aaPanel Virtual Machine Default:") ?></strong>
-                    <?= gettext("aaPanel adalah paket bawaan sistem yang tidak dapat dihapus. Anda hanya dapat menyesuaikan ukuran HDD, alokasi RAM, antarmuka Virtual Ethernet (TAP), dan opsi Bridge Mode jaringan.") ?>
+                    <?= gettext("aaPanel adalah paket bawaan sistem yang tidak dapat dihapus. Anda dapat menyesuaikan ukuran HDD, alokasi RAM, antarmuka Virtual Ethernet (TAP), dan opsi Bridge Mode jaringan.") ?>
+                    <div style="margin-top: 10px; background: rgba(0,0,0,0.1); padding: 8px 12px; border-radius: 4px; font-family: monospace; font-size: 11px;">
+                        <strong><?= gettext("Perintah Instalasi Resmi aaPanel (Linux VM):") ?></strong><br>
+                        <code>URL=https://www.aapanel.com/script/install_panel_en.sh &amp;&amp; if [ -f /usr/bin/curl ];then curl -ksSO $URL ;else wget --no-check-certificate -O install_panel_en.sh $URL;fi;bash install_panel_en.sh ipssl</code>
+                    </div>
                 </div>
             <?php endif; ?>
 
