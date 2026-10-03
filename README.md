@@ -470,19 +470,13 @@ Paket Xray-core di pfSense memungkinkan router bertindak sebagai VPN gateway mul
 │   └── usr/local/www/web-installer/    # Web installer UI Netgate
 │
 ├── scripts/
-│   ├── build_pkg.py                    # Script pembuat paket .pkg
-│   ├── remaster_iso.sh                 # Script remaster ISO offline
-│   ├── install-pfsense-from-linux.sh   # Skrip takeover menimpa Linux ke pfSense
-│   ├── setup-pfsense-all.sh            # Skrip otomatis pasang WireGuard & Xray
-│   └── config.xml.template             # Template konfigurasi pfSense otomatis
-│
-└── [Disimpan di Lokal Saja / Diabaikan oleh .gitignore]:
-    ├── packages/                       # Berkas sumber kode paket lokal (aaPanel, speedtest, wifi, wireguard, xray)
-    ├── scripts/auto_pilot.ps1          # Skrip pengujian otomatis & auto-pilot VM
-    ├── scripts/build_iso.sh            # Skrip build image ISO, IMG, dan IMG.GZ
-    ├── pfsense-custom-offline-installer.iso    # Citra Universal Hybrid ISO (1.11 GB)
-    ├── pfsense-custom-offline-installer.img    # Citra Raw USB Disk Image (1.11 GB)
-    └── pfsense-custom-offline-installer.img.gz # Citra USB terkompresi GZIP untuk flashdisk (681 MB)
+    ├── build_pkg.py                    # Script pembuat paket .pkg
+    ├── remaster_iso.sh                 # Script remaster ISO offline
+    ├── install-pfsense-from-linux.sh   # Skrip takeover menimpa Linux ke pfSense
+    ├── setup-pfsense-all.sh            # Skrip otomatis pasang WireGuard & Xray
+    └── config.xml.template             # Template konfigurasi pfSense otomatis
+
+
 ```
 
 ---
