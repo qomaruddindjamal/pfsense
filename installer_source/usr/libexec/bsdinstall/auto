@@ -384,7 +384,7 @@ fi
 if [ -n "$PFSENSE_INSTALL" ]; then
 	bsdinstall pfSense-repo-fetch || error "Failed to fetch the pfSense pkg repositories"
 	bsdinstall pfSense-repo-setup || error "Failed to setup the pfSense pkg repository"
-	bsdinstall pfSense-install || error "Failed to install pfSense"
+	bsdinstall pfSense-install -D "${BSDINSTALL_CHROOT:-/mnt}" || error "Failed to install pfSense"
 else
 	bsdinstall checksum || error "Distribution checksum failed"
 	bsdinstall distextract || error "Distribution extract failed"

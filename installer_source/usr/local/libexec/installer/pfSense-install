@@ -561,6 +561,7 @@ while getopts em:r:t:D:M:R:V: opt; do
 	esac
 done
 
+: ${DESTDIR:="${BSDINSTALL_CHROOT:-/mnt}"}
 if [ -z "${DESTDIR}" ]; then
 	echo "Error: No destination path."
 	exit 1
