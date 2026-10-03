@@ -1,4 +1,19 @@
+<a id="readme"></a>
+
 # pfSense Custom Edition: WireGuard, Xray & Linux Takeover
+
+<p align="center">
+  <a href="#readme"><img src="https://img.shields.io/badge/%F0%9F%93%96%20README-Overview-0969da?style=for-the-badge" alt="README"></a>&nbsp;
+  <a href="#wireguard"><img src="https://img.shields.io/badge/%F0%9F%9B%A1%EF%B8%8F%20WireGuard-Client%20%26%20Server-2ea44f?style=for-the-badge" alt="WireGuard"></a>&nbsp;
+  <a href="#xray"><img src="https://img.shields.io/badge/%E2%9A%A1%20Xray--core-Multi--Protocol-8957e5?style=for-the-badge" alt="Xray-core"></a>&nbsp;
+  <a href="#aapanel"><img src="https://img.shields.io/badge/%F0%9F%8C%90%20aaPanel-Bhyve%20KVM-f59e0b?style=for-the-badge" alt="aaPanel"></a>&nbsp;
+  <a href="LICENSE"><img src="https://img.shields.io/badge/%E2%9A%96%EF%B8%8F%20License-Apache--2.0-57606a?style=for-the-badge" alt="License"></a>
+</p>
+
+| [📖 **README**](#readme) | [🛡️ **WireGuard**](#wireguard) | [⚡ **Xray-core**](#xray) | [🌐 **aaPanel**](#aapanel) | [⚖️ **Apache-2.0 License**](LICENSE) |
+| :---: | :---: | :---: | :---: | :---: |
+
+---
 
 Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO, integrasi paket **WireGuard** dan **Xray-core** (VLESS, VMess, Trojan, Socks5, TUN, Routing), panduan **aaPanel**, serta skrip otomatisasi untuk **mengganti / menimpa Linux VPS yang sedang berjalan menjadi pfSense**.
 
@@ -114,6 +129,8 @@ sh packages/xray/install-xray.sh
   ```
 
 ---
+
+<a id="wireguard"></a>
 
 ## 🛡️ 4. Panduan Lengkap: Membuat & Menghubungkan WireGuard Client di pfSense
 
@@ -275,7 +292,39 @@ Jika Anda mengonfigurasi pfSense langsung dari shell atau skrip otomatis:
 
 ---
 
-## 🌐 5. Integrasi aaPanel
+<a id="xray"></a>
+
+## ⚡ 5. Panduan & Konfigurasi Xray-core di pfSense
+
+Paket Xray-core di pfSense memungkinkan router bertindak sebagai VPN gateway multi-protokol dengan bypass sensor DPI dan routing pintar (GeoIP/GeoSite).
+
+### 🚀 Protokol yang Didukung
+- **VLESS** (Port `443`): Protokol generasi terbaru berlatensi ultra-rendah dengan XTLS / Reality.
+- **VMess** (Port `8443`): Kompatibel dengan WebSocket (WS) + TLS untuk tunneling melalui CDN (Cloudflare).
+- **Trojan** (Port `9443`): Menyamarkan trafik VPN sebagai lalu lintas HTTPS resmi.
+- **Socks5 Inbound** (Port `10808`): Proxy lokal untuk klien jaringan LAN.
+- **TUN / Dokodemo-door** (Port `12345`): Mode transparan proxy langsung di tingkat kernel/firewall pfSense.
+
+### 🖥️ Pengelolaan via WebGUI pfSense
+1. Akses menu **VPN > Xray-core** (`/vpn_xray.php`).
+2. Terdapat kontrol status daemon, editor JSON konfigurasi interaktif, dan pemantau error log secara real-time.
+
+### 💻 Pengelolaan via CLI pfSense
+- File konfigurasi utama: `/usr/local/etc/xray/config.json`
+- Menjalankan / menghentikan layanan:
+  ```sh
+  service xray start     # Menjalankan Xray daemon
+  service xray status    # Mengecek status aktif
+  service xray restart   # Memuat ulang konfigurasi
+  service xray stop      # Menghentikan layanan
+  ```
+- Utilitas helper: `xray-control {start|stop|restart|status|test|version}`
+
+---
+
+<a id="aapanel"></a>
+
+## 🌐 6. Integrasi aaPanel
 
 > **PENTING Mengenai Arsitektur Sistem:**
 > - **pfSense** berbasis **FreeBSD** dan telah memiliki antarmuka WebGUI bawaan lengkap (Nginx + PHP) untuk routing, firewall, NAT, dan VPN.
