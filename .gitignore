@@ -7,6 +7,7 @@
 *.qcow2
 *.vmdk
 *.vdi
+*.tar
 
 # Temporary and build files
 *.tmp
@@ -35,11 +36,3 @@ scratch/
 
 # Base archive (> 100MB)
 installer_source/usr/local/share/pfSense/base.txz
-
-# Local scratch and debug scripts
-check_*.py
-inspect_*.py
-search_kernel_str.py
-find_*.ps1
-test_*.py
-sync_vm_css.py

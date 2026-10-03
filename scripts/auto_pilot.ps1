@@ -12,7 +12,13 @@ param (
 
 $ErrorActionPreference = "Stop"
 $WorkspaceDir = $PSScriptRoot
-if (-not $WorkspaceDir) { $WorkspaceDir = (Get-Location).Path }
+if (Test-Path (Join-Path $PSScriptRoot "installer_source")) {
+    $WorkspaceDir = $PSScriptRoot
+} elseif (Test-Path (Join-Path (Split-Path $PSScriptRoot -Parent) "installer_source")) {
+    $WorkspaceDir = Split-Path $PSScriptRoot -Parent
+} elseif (-not $WorkspaceDir) {
+    $WorkspaceDir = (Get-Location).Path
+}
 Set-Location $WorkspaceDir
 
 Write-Host "==========================================================" -ForegroundColor Cyan
