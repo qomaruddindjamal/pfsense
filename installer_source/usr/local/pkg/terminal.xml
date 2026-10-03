@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE packagegui SYSTEM "../schema/packages.dtd">
+<?xml-stylesheet type="text/xsl" href="../xsl/package.xsl"?>
+<packagegui>
+	<name>terminal</name>
+	<version>1.0.0</version>
+	<title>Diagnostics: Terminal</title>
+	<menu>
+		<name>Terminal</name>
+		<section>Diagnostics</section>
+		<url>/diag_terminal.php</url>
+		<tooltiptext>Web Terminal Console for pfSense</tooltiptext>
+	</menu>
+</packagegui>

@@ -163,10 +163,10 @@ pfSense_install() {
 
 	# Pastikan file WebGUI dan XML deskriptor paket tambahan terpasang
 	/bin/mkdir -p "${_destdir}/usr/local/www" "${_destdir}/usr/local/pkg" "${_destdir}/usr/local/www/css"
-	for _p in /usr/local/www/vpn_wg.php /usr/local/www/vpn_xray.php /usr/local/www/services_virtual.php /usr/local/www/head.inc /usr/local/www/foot.inc; do
+	for _p in /usr/local/www/vpn_wg.php /usr/local/www/vpn_xray.php /usr/local/www/services_virtual.php /usr/local/www/diag_terminal.php /usr/local/www/head.inc /usr/local/www/foot.inc; do
 		[ -f "${_p}" ] && /bin/cp -f "${_p}" "${_destdir}/usr/local/www/" 2>/dev/null || true
 	done
-	for _x in /usr/local/pkg/wireguard.xml /usr/local/pkg/xray.xml /usr/local/pkg/virtual.xml; do
+	for _x in /usr/local/pkg/wireguard.xml /usr/local/pkg/xray.xml /usr/local/pkg/virtual.xml /usr/local/pkg/terminal.xml; do
 		[ -f "${_x}" ] && /bin/cp -f "${_x}" "${_destdir}/usr/local/pkg/" 2>/dev/null || true
 	done
 	[ -d /usr/local/www/css ] && /bin/cp -rf /usr/local/www/css/* "${_destdir}/usr/local/www/css/" 2>/dev/null || true
@@ -204,7 +204,7 @@ pfSense_install() {
 		/bin/cp -f "/tmp/recovered_config/config.xml" "${_destdir}/conf/config.xml"
 	fi
 
-	# Daftarkan WireGuard, Xray-core, dan Virtual Machines ke menu WebGUI di config.xml
+	# Daftarkan WireGuard, Xray-core, Virtual Machines, dan Terminal ke menu WebGUI di config.xml
 	if [ -f "${_destdir}/cf/conf/config.xml" ] && ! grep -q "<installedpackages>" "${_destdir}/cf/conf/config.xml" 2>/dev/null; then
 		awk '
 		/<\/pfsense>/ {
@@ -227,6 +227,12 @@ pfSense_install() {
 			print "\t\t\t<version>1.0.0</version>"
 			print "\t\t\t<configurationfile>virtual.xml</configurationfile>"
 			print "\t\t</package>"
+			print "\t\t<package>"
+			print "\t\t\t<name>terminal</name>"
+			print "\t\t\t<descr><![CDATA[Interactive Web Terminal Console]]></descr>"
+			print "\t\t\t<version>1.0.0</version>"
+			print "\t\t\t<configurationfile>terminal.xml</configurationfile>"
+			print "\t\t</package>"
 			print "\t\t<menu>"
 			print "\t\t\t<name>WireGuard</name>"
 			print "\t\t\t<section>VPN</section>"
@@ -244,6 +250,12 @@ pfSense_install() {
 			print "\t\t\t<section>KVM</section>"
 			print "\t\t\t<url>/services_virtual.php</url>"
 			print "\t\t\t<tooltiptext>Virtual Machine and aaPanel Manager</tooltiptext>"
+			print "\t\t</menu>"
+			print "\t\t<menu>"
+			print "\t\t\t<name>Terminal</name>"
+			print "\t\t\t<section>Diagnostics</section>"
+			print "\t\t\t<url>/diag_terminal.php</url>"
+			print "\t\t\t<tooltiptext>Interactive Web Terminal Console</tooltiptext>"
 			print "\t\t</menu>"
 			print "\t\t<service>"
 			print "\t\t\t<name>wireguard</name>"

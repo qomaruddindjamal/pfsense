@@ -426,6 +426,7 @@ $diagnostics_menu[] = array(gettext("States Summary"), "/diag_states_summary.php
 $diagnostics_menu[] = array(gettext("System Activity"), "/diag_system_activity.php");
 $diagnostics_menu[] = array(gettext("Traceroute"), "/diag_traceroute.php");
 $diagnostics_menu[] = array(gettext("Packet Capture"), "/diag_packet_capture.php");
+$diagnostics_menu[] = array(gettext("Terminal"), "/diag_terminal.php");
 
 $diagnostics_menu = msort(array_merge($diagnostics_menu, return_ext_menu("Diagnostics")), 0);
 
@@ -552,6 +553,12 @@ if (are_notices_pending()) {
 		$kvm_menu[] = array(gettext("Storage & Conf"), "/services_virtual.php#conf");
 		$kvm_menu = msort(array_merge($kvm_menu, return_ext_menu("KVM")), 0);
 
+		// Terminal Dedicated Menu
+		$terminal_menu = array();
+		$terminal_menu[] = array(gettext("Web Terminal"), "/diag_terminal.php");
+		$terminal_menu[] = array(gettext("Command Prompt"), "/diag_command.php");
+		$terminal_menu = msort(array_merge($terminal_menu, return_ext_menu("Terminal")), 0);
+
 		$categories = [
 			['id' => 'system',      'name' => 'System',      'icon' => 'fa-solid fa-gears',          'menu' => $system_menu,      'href' => null],
 			['id' => 'interfaces',  'name' => 'Interfaces',  'icon' => 'fa-solid fa-network-wired',  'menu' => $interfaces_menu,  'href' => null],
@@ -561,6 +568,7 @@ if (are_notices_pending()) {
 			['id' => 'kvm',         'name' => 'KVM',         'icon' => 'fa-solid fa-server',         'menu' => $kvm_menu,         'href' => null],
 			['id' => 'status',      'name' => 'Status',      'icon' => 'fa-solid fa-chart-line',     'menu' => $status_menu,      'href' => null],
 			['id' => 'diagnostics', 'name' => 'Diagnostics', 'icon' => 'fa-solid fa-toolbox',        'menu' => $diagnostics_menu, 'href' => null],
+			['id' => 'terminal',    'name' => 'Terminal',    'icon' => 'fa-solid fa-terminal',       'menu' => $terminal_menu,    'href' => null],
 			['id' => 'help',        'name' => $help_menu_title, 'icon' => 'fa-solid fa-circle-question','menu' => $help_menu,    'href' => '_blank']
 		];
 
