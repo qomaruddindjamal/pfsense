@@ -2,8 +2,9 @@
 export TERM=xterm
 export HOME=/root
 export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
-
 /sbin/ldconfig -m /lib /usr/lib /usr/local/lib 2>/dev/null || true
+if ! /usr/bin/pgrep -q pfSense-installer; then /usr/local/bin/cgi-fcgi -start -connect 127.0.0.1:9000 /usr/local/sbin/pfSense-installer 2>/dev/null || true; fi
+if ! /usr/bin/pgrep -q nginx; then /usr/local/etc/rc.d/nginx onestart 2>/dev/null || /usr/local/sbin/nginx 2>/dev/null || true; fi
 
 while :; do
     clear

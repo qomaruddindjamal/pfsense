@@ -31,13 +31,12 @@ ZFS_POOL="pfSense"
 
 wipe_partition_metadata() {
 	local _dev
-	[ "${#}" -ne 1 ] && \
-	    return 1
+	[ "${#}" -ne 1 ] && return 0
 	_dev="${1}"
-	if [ -z "${_dev}" ] || [ ! -c "/dev/${_dev}" ]; then
-		return 1
+	if [ -n "${_dev}" ] && [ -c "/dev/${_dev}" ]; then
+		/sbin/zpool labelclear -f "/dev/${_dev}" 2> /dev/null || true
+		/bin/dd if=/dev/zero of="/dev/${_dev}" bs=1M count=1 status=none 2>/dev/null || true
 	fi
-	/sbin/zpool labelclear -f "${_dev}" 2> /dev/null
 	return 0
 }
 
@@ -53,22 +52,30 @@ destroy_disk_metadata() {
 		return 1
 	fi
 
-	echo "Exporting ZFS pools..."
-	/sbin/zpool list -Ho name | while read z_name; do
-		/sbin/zpool export -F "${z_name}"
+	echo "Exporting and cleaning existing pools and filesystems..."
+	/sbin/umount -f /mnt/dev 2>/dev/null || true
+	/sbin/umount -f /mnt 2>/dev/null || true
+	/sbin/swapoff "/dev/${_dev}*" 2>/dev/null || true
+
+	/sbin/zpool list -Ho name 2>/dev/null | while read z_name; do
+		[ -n "${z_name}" ] && /sbin/zpool export -F "${z_name}" 2>/dev/null || true
 	done
 
-	/sbin/gpart destroy -F "${_dev}"
-	/sbin/graid delete "${_dev}" 2> /dev/null
-	/sbin/zpool labelclear -f "${_dev}" 2> /dev/null
+	# Hapus ZFS label dan partisi lama
+	/sbin/zpool labelclear -f "/dev/${_dev}" 2> /dev/null || true
+	/sbin/graid delete "${_dev}" 2> /dev/null || true
+	/sbin/gpart destroy -F "${_dev}" 2> /dev/null || true
 
-	# Make doubly-sure backup GPT is destroyed
-	/sbin/gpart create -s GPT "${_dev}"
-	/sbin/gpart destroy -F "${_dev}"
-
-	if [ "${ARCH}" = "aarch64" ]; then
-		/usr/sbin/trim -f -q "${_dev}"
+	# Zero out MBR/GPT primer dan sekunder
+	/bin/dd if=/dev/zero of="/dev/${_dev}" bs=1M count=16 status=none 2>/dev/null || true
+	local _sectors="$(/sbin/diskinfo "/dev/${_dev}" 2>/dev/null | /usr/bin/awk '{print $4}')"
+	if [ -n "${_sectors}" ] && [ "${_sectors}" -gt 2048 ]; then
+		local _seek=$(( ${_sectors} - 2048 ))
+		/bin/dd if=/dev/zero of="/dev/${_dev}" bs=512 seek="${_seek}" status=none 2>/dev/null || true
 	fi
+
+	/sbin/gpart create -s GPT "${_dev}" 2>/dev/null || true
+	/sbin/gpart destroy -F "${_dev}" 2>/dev/null || true
 
 	return 0
 }
@@ -76,15 +83,16 @@ destroy_disk_metadata() {
 create_gpt_part() {
 	local _dev _efi_fat_label _efi_gpt_label _idx _index _part_type
 	local _swap_label _type
+	local OPTIND=1
 
 	while getopts i: opt; do
 		case "${opt}" in
 		"i")
 			_index="${OPTARG}"
-			shift 2
 			;;
 		esac
 	done
+	shift $(( ${OPTIND} - 1 ))
 
 	[ "${#}" -ne 2 ] && \
 	    return 1
@@ -179,15 +187,16 @@ create_gpt_part() {
 
 create_mbr_part() {
 	local _dev _efi_fat_label _idx _index _part_type _type
+	local OPTIND=1
 
 	while getopts i: opt; do
 		case "${opt}" in
 		"i")
 			_index="${OPTARG}"
-			shift 2
 			;;
 		esac
 	done
+	shift $(( ${OPTIND} - 1 ))
 
 	[ "${#}" -ne 2 ] && \
 	    return 1
@@ -361,15 +370,16 @@ create_ufs_part() {
 
 create_zfs_part() {
 	local _scheme _dev _index
+	local OPTIND=1
 
 	while getopts i: opt; do
 		case "${opt}" in
 		"i")
 			_index="${OPTARG}"
-			shift 2
 			;;
 		esac
 	done
+	shift $(( ${OPTIND} - 1 ))
 
 	if [ -z "${_index}" ] || [ "${#}" -ne 2 ]; then
 		return 1
@@ -537,12 +547,11 @@ create_zfs_pool() {
 EOF
 	/usr/bin/install -f schg -d "${_mountp}/var/empty"
 
-	# Set canmount=noauto after creating the datasets so they are mounted
-	# where they should be for the install
+	# Set canmount=noauto only for the root boot environment, children must mount automatically
 	/sbin/zfs set canmount=noauto "${ZFS_POOL}/ROOT/default"
-	/sbin/zfs set canmount=noauto "${ZFS_POOL}/ROOT/default/cf"
-	/sbin/zfs set canmount=noauto "${ZFS_POOL}/ROOT/default/var_cache_pkg"
-	/sbin/zfs set canmount=noauto "${ZFS_POOL}/ROOT/default/var_db_pkg"
+	/sbin/zfs set canmount=on "${ZFS_POOL}/ROOT/default/cf"
+	/sbin/zfs set canmount=on "${ZFS_POOL}/ROOT/default/var_cache_pkg"
+	/sbin/zfs set canmount=on "${ZFS_POOL}/ROOT/default/var_db_pkg"
 
 	zpool set "bootfs=${ZFS_POOL}/${ZFS_BEROOT}/${ZFS_BOOTFS_NAME}" "${ZFS_POOL}"
 }
@@ -620,6 +629,7 @@ unset SCHEME
 unset SWAP_SIZE
 unset ZFS_VOL_TYPE
 NDISKS=0
+OPTIND=1
 while getopts d:m:s:F:S:Z: opt; do
 	case "${opt}" in
 	"d")
@@ -627,15 +637,12 @@ while getopts d:m:s:F:S:Z: opt; do
 		    DISKS="${DISKS} "
 		DISKS="${DISKS}${OPTARG}"
 		NDISKS=$(( ${NDISKS} + 1 ))
-		shift 2
 		;;
 	"m")
 		MOUNTP="${OPTARG}"
-		shift 2
 		;;
 	"s")
 		SWAP_SIZE="${OPTARG}"
-		shift 2
 		;;
 	"F")
 		FSTYPE="${OPTARG}"
@@ -647,7 +654,6 @@ while getopts d:m:s:F:S:Z: opt; do
 			exit 1
 			;;
 		esac
-		shift 2
 		;;
 	"S")
 		SCHEME="${OPTARG}"
@@ -659,7 +665,6 @@ while getopts d:m:s:F:S:Z: opt; do
 			exit 1
 			;;
 		esac
-		shift 2
 		;;
 	"Z")
 		ZFS_VOL_TYPE="${OPTARG}"
@@ -671,7 +676,6 @@ while getopts d:m:s:F:S:Z: opt; do
 			exit 1
 			;;
 		esac
-		shift 2
 		;;
 	*)
 		exit 1

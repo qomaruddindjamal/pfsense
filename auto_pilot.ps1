@@ -26,19 +26,19 @@ Write-Host "Direktori Kerja: $WorkspaceDir" -ForegroundColor Yellow
 Write-Host "`n[1/4] Memeriksa dan Memperbaiki Source Code..." -ForegroundColor Green
 
 # 1.1 Pastikan pfSense-base terakit
-$baseTarget = Join-Path $WorkspaceDir "installer_source\packages\All\pfSense-base-2.7.2.pkg"
-$splitDir = Join-Path $WorkspaceDir "installer_source\packages\All\pfSense-base-2.7.2_parts"
-if ((-not (Test-Path $baseTarget)) -or ((Get-Item $baseTarget).Length -lt 100000000)) {
-    if (Test-Path $splitDir) {
-        Write-Host "  -> Menggabungkan kembali paket pfSense-base dari partisi split..." -ForegroundColor Gray
-        $parts = Get-ChildItem -Path $splitDir -Filter "pfSense-base-2.7.2.pkg.part_*" | Sort-Object Name
-        $outStream = [System.IO.File]::Create($baseTarget)
-        foreach ($p in $parts) {
-            $bytes = [System.IO.File]::ReadAllBytes($p.FullName)
-            $outStream.Write($bytes, 0, $bytes.Length)
-        }
+$base29Target = Join-Path $WorkspaceDir "installer_source\packages\All\pfSense-base-2.9.0.pkg"
+$partaa = Join-Path $WorkspaceDir "installer_source\packages\All\pfSense-base-2.9.0.pkg.partaa"
+$partab = Join-Path $WorkspaceDir "installer_source\packages\All\pfSense-base-2.9.0.pkg.partab"
+if ((-not (Test-Path $base29Target)) -or ((Get-Item $base29Target).Length -lt 100000000)) {
+    if ((Test-Path $partaa) -and (Test-Path $partab)) {
+        Write-Host "  -> Menggabungkan pfSense-base-2.9.0.pkg dari partaa dan partab..." -ForegroundColor Gray
+        $outStream = [System.IO.File]::Create($base29Target)
+        $bytesA = [System.IO.File]::ReadAllBytes($partaa)
+        $outStream.Write($bytesA, 0, $bytesA.Length)
+        $bytesB = [System.IO.File]::ReadAllBytes($partab)
+        $outStream.Write($bytesB, 0, $bytesB.Length)
         $outStream.Close()
-        Write-Host "  [OK] pfSense-base berhasil dirakit: $((Get-Item $baseTarget).Length) bytes" -ForegroundColor Green
+        Write-Host "  [OK] pfSense-base-2.9.0.pkg berhasil dirakit: $((Get-Item $base29Target).Length) bytes" -ForegroundColor Green
     }
 }
 
@@ -143,8 +143,9 @@ $runLines = @(
     "export TERM=xterm",
     "export HOME=/root",
     "export PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin",
-    "",
     "/sbin/ldconfig -m /lib /usr/lib /usr/local/lib 2>/dev/null || true",
+    "if ! /usr/bin/pgrep -q pfSense-installer; then /usr/local/bin/cgi-fcgi -start -connect 127.0.0.1:9000 /usr/local/sbin/pfSense-installer 2>/dev/null || true; fi",
+    "if ! /usr/bin/pgrep -q nginx; then /usr/local/etc/rc.d/nginx onestart 2>/dev/null || /usr/local/sbin/nginx 2>/dev/null || true; fi",
     "",
     "while :; do",
     "    clear",
@@ -222,6 +223,8 @@ if (-not $SkipIsoBuild) {
         "-V", "PFSENSE",
         "-J",
         "-r",
+        "-file-mode", "0755",
+        "-dir-mode", "0755",
         "-b", "boot/cdboot",
         "-no-emul-boot",
         "-eltorito-alt-boot",
@@ -285,7 +288,8 @@ if (-not $SkipVmBoot) {
         Invoke-VBox -Arguments @("modifyvm", $VmName, "--paravirt-provider", "kvm", "--pae", "on", "--cpus", "3", "--memory", "3072") | Out-Null
         
         $fullIsoPath = [System.IO.Path]::GetFullPath((Join-Path $WorkspaceDir "pfsense-custom-offline-installer.iso"))
-        Invoke-VBox -Arguments @("storageattach", $VmName, "--storagectl", "IDE", "--port", "1", "--device", "0", "--type", "dvddrive", "--medium", $fullIsoPath) | Out-Null
+        Invoke-VBox -Arguments @("storagectl", $VmName, "--name", "SATA", "--add", "sata", "--controller", "IntelAhci", "--bootable", "on") | Out-Null
+        Invoke-VBox -Arguments @("storageattach", $VmName, "--storagectl", "SATA", "--port", "1", "--device", "0", "--type", "dvddrive", "--medium", $fullIsoPath) | Out-Null
 
         Write-Host "  [OK] VM $VmName berhasil dioptimalkan (3 vCPU, 3GB RAM, KVM paravirtualization clock)." -ForegroundColor Green
         

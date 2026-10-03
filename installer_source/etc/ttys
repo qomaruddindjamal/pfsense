@@ -24,7 +24,7 @@
 # If console is marked "insecure", then init will ask for the root password
 # when going to single-user mode.
 console	none				unknown	off secure
-ttyv0	none				xterm	off secure
+ttyv0	"/usr/libexec/getty al.Pc"		xterm	onifexists secure
 # Virtual terminals
 ttyv1	"/usr/libexec/getty Pc"		xterm	onifexists secure
 ttyv2	"/usr/libexec/getty Pc"		xterm	onifexists secure

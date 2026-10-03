@@ -1079,9 +1079,9 @@ zfs_create_diskpart()
 	local swapsize
 	f_expand_number "$ZFSBOOT_SWAP_SIZE" swapsize
 	if [ "$isswapmirror" ]; then
-		# This is not the first disk in the mirror, do nothing
+		: # This is not the first disk in the mirror, do nothing
 	elif [ ${swapsize:-0} -eq 0 ]; then
-		# If swap is 0 sized, don't add it to fstab
+		: # If swap is 0 sized, don't add it to fstab
 	elif [ "$ZFSBOOT_SWAP_ENCRYPTION" -a "$ZFSBOOT_SWAP_MIRROR" ]; then
 		f_eval_catch $funcname printf "$PRINTF_FSTAB" \
 		             /dev/mirror/swap.eli none swap sw 0 0 \

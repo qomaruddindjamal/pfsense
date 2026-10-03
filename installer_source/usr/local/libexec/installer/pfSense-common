@@ -56,36 +56,11 @@ UNBOUND_CONF="/var/unbound/unbound.conf"
 : "${PRODUCT=pfSense}"
 
 ce_repos_set() {
-	local _result _state _tmpfile
-
-	[ "${#}" -lt 1 ] && \
-	    return 1
-
-	_state="${1}"
-	case "${_state}" in
-	[Yy][Ee][Ss]|[Tt][Rr][Uu][Ee]|[Nn][Oo]|[Ff][Aa][Ll][Ss][Ee])
-		;;
-	*)
-		return 1
-	esac
-
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} -d "enable=${_state}" \
-	    "${INSTALLER_URL}/ce-repositories" 2>&1 > "${_tmpfile}"; then
-		${RM} -f "${_tmpfile}" 2>&1 > /dev/null
-		return 1
-	fi
-	_result=$(${GREP} -c "\"status\":\"ok\"" "${_tmpfile}")
-	${RM} -f "${_tmpfile}" 2>&1 > /dev/null
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
 	return 0
 }
 
 cfg_count() {
-	echo -n "$(gen_count ".cfg_count")"
+	echo -n "0"
 	return 0
 }
 
@@ -185,60 +160,10 @@ cfg_setup() {
 }
 
 console_serial_set() {
-	local _en _result _tmpfile
-
-	[ "${#}" -lt 1 ] && \
-	    return 1
-
-	_en="${1}"
-	case "${_en}" in
-	[yY][eE][sS]|[tT][rR][uU][eE]|[nN][oO]|[fF][aA][lL][sS][eE])
-		;;
-	*)
-		return 1
-	esac
-
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} -d "enable=${_en}" \
-	    "${INSTALLER_URL}/console-serial" 2>&1 > "${_tmpfile}"; then
-		${RM} -f "${_tmpfile}" 2>&1 > /dev/null
-		return 1
-	fi
-	_result=$(${GREP} -c "\"status\":\"ok\"" "${_tmpfile}")
-	${RM} -f "${_tmpfile}" 2>&1 > /dev/null
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
 	return 0
 }
 
 console_type_set() {
-	local _result _tmpfile _type
-
-	[ "${#}" -lt 1 ] && \
-	    return 1
-
-	_type="${1}"
-	case "${_type}" in
-	"efi"|"video"|"none")
-		;;
-	*)
-		return 1
-	esac
-
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} -d "type=${_type}" \
-	    "${INSTALLER_URL}/console-type" 2>&1 > "${_tmpfile}"; then
-		${RM} -f "${_tmpfile}" 2>&1 > /dev/null
-		return 1
-	fi
-	_result=$(${GREP} -c "\"status\":\"ok\"" "${_tmpfile}")
-	${RM} -f "${_tmpfile}" 2>&1 > /dev/null
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
 	return 0
 }
 
@@ -312,35 +237,32 @@ dhclient_kill() {
 }
 
 get_info() {
-	echo -n "$("${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/info")"
+	echo -n "{}"
 	return 0
 }
 
 get_model() {
-	echo -n "$(json_read "$(get_info)" '.model')"
+	echo -n ""
 	return 0
 }
 
 get_model_descr() {
-	echo -n "$(json_read "$(get_info)" '."model_descr"')"
+	echo -n ""
 	return 0
 }
 
 get_nid() {
-	echo -n "$(json_read "$(get_info)" '.ndi')"
+	echo -n ""
 	return 0
 }
 
 get_unbound_local() {
-	local _if _res
-	_if="wan"
-	_res="$(json_read "$(get_info)" ".${_if}.\"unbound_local\"")"
-	echo -n "${_res}"
+	echo -n ""
 	return 0
 }
 
 get_version() {
-	echo -n "$(json_read "$(get_info)" '.version')"
+	echo -n "2.9.0-RELEASE"
 	return 0
 }
 
@@ -355,41 +277,14 @@ get_title() {
 }
 
 installer_reboot() {
-	if state_set "DISK-MOUNTED"; then
-		if ! "${CURL}" ${CURLFLAGS} \
-		    "${INSTALLER_URL}/disk-umount" 2>&1 > /dev/null; then
-			return 1
-		fi
-	fi
-	if ! "${CURL}" ${CURLFLAGS} -d "confirm=1" \
-	    "${INSTALLER_URL}/reboot" 2>&1 > /dev/null; then
-		return 1
-	fi
-
-	while [ 1 ]; do
-		echo -n '.'
-		sleep 1
-	done
-
-	# Do not return.
+	/sbin/umount -f /mnt/dev 2>/dev/null || true
+	/sbin/umount -f /mnt 2>/dev/null || true
+	/sbin/zpool export -a 2>/dev/null || true
+	/sbin/reboot
 	exit 0
 }
 
 installer_reset() {
-	local _result _tmpfile
-
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} \
-	    "${INSTALLER_URL}/reset" 2>&1 > "${_tmpfile}"; then
-		${RM} -f "${_tmpfile}" 2>&1 > /dev/null
-		return 1
-	fi
-	_result=$(${GREP} -c "\"status\":\"ok\"" "${_tmpfile}")
-	${RM} -f "${_tmpfile}" 2>&1 > /dev/null
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
 	return 0
 }
 
@@ -423,7 +318,7 @@ mpd_kill() {
 }
 
 get_info() {
-	echo -n "$("${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/info")"
+	echo -n "{}"
 	return 0
 }
 
@@ -433,39 +328,9 @@ state_get() {
 }
 
 state_set() {
-	local state _state
-	[ "${#}" -ne 1 ] && \
-	    return 1
-	_state="${1}"
-
-	for state in $(state_get); do
-		if [ "${state}" = "${_state}" ]; then
-			return 0
-		fi
-	done
-
-	return 1
+	return 0
 }
 
 swap_size_set() {
-	local _result _tmpfile _size
-
-	[ "${#}" -lt 1 ] && \
-	    return 1
-
-	_size="${1}"
-
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} -d "size=${_size}" \
-	    "${INSTALLER_URL}/swap-size" 2>&1 > "${_tmpfile}"; then
-		${RM} -f "${_tmpfile}" 2>&1 > /dev/null
-		return 1
-	fi
-	_result=$(${GREP} -c "\"status\":\"ok\"" "${_tmpfile}")
-	${RM} -f "${_tmpfile}" 2>&1 > /dev/null
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
 	return 0
 }

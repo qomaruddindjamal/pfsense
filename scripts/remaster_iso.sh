@@ -42,9 +42,9 @@ chmod +x "${WORK_DIR}/usr/local/libexec/installer/pfSense-post-install"
 # 4. Bangun kembali ISO bootable
 echo "[*] Membuat image ISO baru: ${ISO_OUTPUT}..."
 if which mkisofs >/dev/null 2>&1; then
-    mkisofs -V "PFSENSE" -J -R -b boot/cdboot -no-emul-boot -o "${ISO_OUTPUT}" "${WORK_DIR}"
+    mkisofs -V "PFSENSE" -J -r -file-mode 0755 -dir-mode 0755 -b boot/cdboot -no-emul-boot -o "${ISO_OUTPUT}" "${WORK_DIR}"
 elif which xorriso >/dev/null 2>&1; then
-    xorriso -as mkisofs -V "PFSENSE" -J -R -b boot/cdboot -no-emul-boot -o "${ISO_OUTPUT}" "${WORK_DIR}"
+    xorriso -as mkisofs -V "PFSENSE" -J -r -file-mode 0755 -dir-mode 0755 -b boot/cdboot -no-emul-boot -o "${ISO_OUTPUT}" "${WORK_DIR}"
 fi
 
 echo "[✓] ISO Custom pfSense Offline berhasil dibuat: ${ISO_OUTPUT}"

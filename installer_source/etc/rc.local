@@ -46,12 +46,11 @@ chmod +x /usr/local/libexec/installer/* 2>/dev/null || true
 
 [ ! -d /var/log/nginx ] && mkdir /var/log/nginx
 
-# Create the nginx self-signed certificate.
-/usr/local/libexec/installer/pfSense-cert -c
+# Skip nginx and FastCGI daemon for offline console installation
+# /usr/local/libexec/installer/pfSense-cert -c
+# /usr/local/etc/rc.d/nginx onestart 2>/dev/null || /usr/local/sbin/nginx 2>/dev/null || true
+# INSTALLER_PID="$(/usr/bin/pgrep pfSense-installer)"
+# [ -z "${INSTALLER_PID}" ] && \
+#     /usr/local/bin/cgi-fcgi -start -connect 127.0.0.1:9000 /usr/local/sbin/pfSense-installer
+# /usr/local/libexec/installer/pfSense-installerd.sh &
 
-INSTALLER_PID="$(/usr/bin/pgrep pfSense-installer)"
-[ -z "${INSTALLER_PID}" ] && \
-    /usr/local/bin/cgi-fcgi -start -connect 127.0.0.1:9000 /usr/local/sbin/pfSense-installer
-
-# Start the daemon used to manage the backend process.
-/usr/local/libexec/installer/pfSense-installerd.sh &

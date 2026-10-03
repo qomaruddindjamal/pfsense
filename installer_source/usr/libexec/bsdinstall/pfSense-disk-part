@@ -130,63 +130,17 @@ unset DESTDISK
 unset FSTYPE
 unset PSCHEME
 
-main_menu
+PSCHEME="GPT"
+FSTYPE="ZFS"
+ZFS_VOLTYPE="stripe"
 
-case "${PSCHEME}" in
-"GPT"|"MBR")
-	break
-	;;
-*)
-	errx "pfSense partitioning" "\nInvalid partition scheme.\n "
-	exit 1
-	;;
-esac
+for _d in $(sysctl -n kern.disks 2>/dev/null); do
+	case "${_d}" in
+		cd*|pass*|md*) continue ;;
+		*) DESTDISK="${_d}"; break ;;
+	esac
+done
+[ -z "${DESTDISK}" ] && DESTDISK="ada0"
 
-case "${FSTYPE}" in
-"UFS"|"ZFS")
-	break
-	;;
-*)
-	errx "pfSense partitioning" "\nInvalid File System type.\n "
-	exit 1
-	;;
-esac
-
-if ! install_scheme_set "${PSCHEME}"; then
-	errx "pfSense partitioning" "\nFailed to set the partition scheme.\n "
-	exit 1
-fi
-
-if ! install_fstype_set "${FSTYPE}"; then
-	errx "pfSense partitioning" "\nFailed to set the File System type.\n "
-	exit 1
-fi
-
-case "${FSTYPE}" in
-"UFS")
-	part_ufs
-	;;
-"ZFS")
-	part_zfs
-	;;
-esac
-
-# $DESTDISK must be set at this point.
-if [ -z "${DESTDISK}" ]; then
-	errx "pfSense partitioning" "\nFailed to select the installation disk.\n "
-	exit 1
-fi
-
-# Set the selected disk(s) as the target device on the backend.
-if ! install_disk_add "${DESTDISK}"; then
-	errx "pfSense partitioning" "\nFailed to save the selected installation disk.\n "
-#	exit 1
-fi
-
-# Commit changes
-if ! install_confirm "${DESTDISK}"; then
-	errx "pfSense partitioning" "\nInstallation aborted.\n "
-	exit 1
-fi
-
+install_confirm "${DESTDISK}" || exit 1
 exit 0

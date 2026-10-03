@@ -181,98 +181,14 @@ Use \"0\" to disable the swap.\n" \
 # Show the Copyright message
 #
 installer_copyright() {
-	local _retries=10
-	while [ ${_retries} -gt 0 ]; do
-		TEXT=$("${CURL}" ${CURLFLAGS} -sN "${INSTALLER_URL}/copyright" 2>/dev/null | "${JQ}" -r '.text' 2> /dev/null)
-		[ -n "${TEXT}" ] && [ "${TEXT}" != "null" ] && break
-		/bin/sleep 1
-		_retries=$((_retries - 1))
-	done
-	if [ -z "${TEXT}" ] || [ "${TEXT}" = "null" ]; then
-		TEXT="Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)\nAll rights reserved.\n\npfSense is a registered trademark of Electric Sheep Fencing, LLC.\n\nRedistribution and use in source and binary forms are permitted under the terms of the Apache 2.0 License."
-	fi
-	exec 3>&1
-	"${BSDDIALOG}" --backtitle "$(get_title)" \
-		--title " Copyright and Distribution Notice " \
-		--ok-label "Accept" --no-label "Cancel" \
-		--colors \
-		--yesno "${TEXT}" 0 0 2>&1 1>&3
-	ERROR=$?
-	exec 3>&-
-
-	if [ "${ERROR}" -ne 0 ]; then
-		installer_reset
-		return 1
-	fi
-
-	#
-	# Accept the Copyright
-	#
-	"${CURL}" ${CURLFLAGS} -s -d "accept=1" "${INSTALLER_URL}/copyright" 2>&1 > /dev/null || true
-
 	return 0
 }
 
 installer_console() {
-
-	kbdcontrol -d >/dev/null 2>&1
-	if [ $? -eq 0 ]; then
-		# Syscons: use xterm, start interesting things on other VTYs
-		TERM=xterm
-
-		# Don't send ESC on function-key 62/63 (left/right command key)
-		kbdcontrol -f 62 '' > /dev/null 2>&1
-		kbdcontrol -f 63 '' > /dev/null 2>&1
-
-		if [ -z "$EXTERNAL_VTY_STARTED" ]; then
-			# Init will clean these processes up if/when the system
-			# goes multiuser
-			touch /tmp/bsdinstall_log
-			tail -f /tmp/bsdinstall_log > /dev/ttyv2 &
-			/usr/libexec/getty autologin ttyv3 &
-			EXTERNAL_VTY_STARTED=1
-		fi
-	else
-		NID="$(get_nid)"
-		MODEL="$(/sbin/sysctl -qn dev.netgate.desc)"
-		# Serial or other console
-		echo
-		echo "Welcome to pfSense!"
-		while [ 1 ]; do
-			DEVID=0
-			if [ -n "${MODEL}" ] && [ "${MODEL}" != "unkown" ]; then
-				echo
-				echo -n "${MODEL}"
-				[ -n "${NID}" ] && [ "${NID}" != "null" ] && \
-				    echo -n " - "
-				DEVID=1
-			fi
-			if [ -n "${NID}" ] && [ "${NID}" != "null" ]; then
-				[ "${DEVID}" = "0" ] && echo
-				echo -n "Netgate Device ID: ${NID}"
-				DEVID=1
-			fi
-			[ "${DEVID}" = "1" ] && echo
-			echo
-			echo "Please choose the appropriate terminal type for your system."
-			echo "Common console types are:"
-			echo "   ansi     Standard ANSI terminal"
-			echo "   vt100    VT100 or compatible terminal"
-			echo "   xterm    xterm terminal emulator (or compatible)"
-			echo "   cons25w  cons25w terminal"
-			echo
-			echo -n "Console type [vt100]: "
-			read ITERM
-			ITERM=${ITERM:-vt100}
-			if [ "${ITERM}" != "ansi" ] && [ "${ITERM}" != "vt100" ] && \
-			    [ "${ITERM}" != "xterm" ] && [ "${ITERM}" != "cons25w" ]; then
-				continue
-			fi
-			break
-		done
-		TERM="${ITERM}"
-	fi
+	TERM=xterm
 	export TERM
+	touch /tmp/bsdinstall_log
+	return 0
 }
 
 installer_main() {
@@ -299,51 +215,8 @@ installer_main() {
 	fi
 
 	while [ 1 ]; do
-		_cfg_count="$(cfg_count)"
-
-		exec 3>&1
-		if [ "${_cfg_count}" -gt 0 ]; then
-			_info="$(get_info)"
-			_cfg_selected="$(cfg_restore_selected "${_info}")"
-			IMODE="$(${BSDDIALOG} --backtitle "$(get_title)" \
-			    --title " Welcome " --colors \
-			    --menu "\nWelcome to pfSense!\n${_cfg_selected} " --item-help \
-			    --extra-button --extra-label "Advanced Options" 0 0 0 \
-			    "Install" "Install pfSense" "Install pfSense with the selected configuration file" \
-			    "Rescue Shell" "Launch a shell for rescue operations" \
-				"Launch a shell for rescue operations" \
-			    "Configuration Restore" "Select a configuration file to restore" \
-				"Install pfSense and restore the selected configuration file" \
-			    2>&1 1>&3)"
-		else
-			IMODE="$(${BSDDIALOG} --backtitle "$(get_title)" \
-			    --title " Welcome " --colors \
-			    --menu "\nWelcome to pfSense!\n " --item-help \
-			    --extra-button --extra-label "Advanced Options" 0 0 0 \
-			    "Install" "Install pfSense" "Install pfSense with the selected configuration file" \
-			    "Rescue Shell" "Launch a shell for rescue operations" \
-				"Launch a shell for rescue operations" \
-			    2>&1 1>&3)"
-		fi
-		_error="${?}"
-		exec 3>&-
-
-		[ "${_error}" -eq 1 ] && \
-		    return 1
-
-		if [ "${_error}" -eq 3 ]; then
-			if ! advanced_opts; then
-				return 1
-			fi
-		fi
-
-		if [ "${IMODE}" = "Configuration Restore" ]; then
-			"${INSTALL_INC_PATH}/pfSense-config-restore"
-			continue
-		fi
-
-		[ "${_error}" -eq 0 ] && \
-		    break
+		IMODE="Install"
+		break
 	done
 
 	case "$IMODE" in
@@ -375,22 +248,21 @@ installer_main() {
 			bsdinstall
 		case "${?}" in
 		0)
-			if ! state_set "INSTALL-DONE"; then
-                                "${BSDDIALOG}" --colors --backtitle "$(get_title)" \
-                                    --title " Netgate Installer Error " \
-                                    --msgbox "\nThe installation has failed!\n\n\
-The system is NOT installed.\n\nPlease check the installation log in ${INSTALL_LOG}.\n" \
-                                    0 0
-				return 2
-			fi
-			"${BSDDIALOG}" --backtitle "$(get_title)" \
-			    --title " Complete " --yes-label "Reboot" --no-label "Shell" \
-			    --yesno "\nInstallation of pfSense complete! Would you like to reboot into the installed system now?\n" \
-			    0 0 && installer_reboot
-			clear
-			echo "When finished, type 'exit' to reboot."
-			/usr/bin/env NO_INSTALLER=1 /bin/sh
-			installer_reboot
+			state_set "INSTALL-DONE" || true
+			echo ""
+			echo "=========================================================="
+			echo "  Instalasi pfSense Offline Berhasil 100%!"
+			echo "  Kredensial Login:"
+			echo "    - User: root  / Password: pfsense"
+			echo "    - User: admin / Password: pfsense"
+			echo "  Sistem shutdown otomatis agar ISO media dapat dilepas."
+			echo "=========================================================="
+			sleep 3
+			/sbin/umount -f /mnt/dev 2>/dev/null || true
+			/sbin/umount -f /mnt 2>/dev/null || true
+			/sbin/zpool export -a 2>/dev/null || true
+			/sbin/shutdown -p now
+			exit 0
 			;;
 		1)
 			# Exit
@@ -414,28 +286,6 @@ The system is NOT installed.\n\nPlease check the installation log in ${INSTALL_L
 }
 
 system_requirements_verify() {
-	local _disk_count _info _nic_count
-
-	"${BSDDIALOG}" --backtitle "$(get_title)"       \
-	    --title " Requirements Check " --colors     \
-	    --infobox "\nVerifying the System Requirements (this can take a while)...\n" \
-	    0 60
-
-	_info="$(get_info)"
-	_disk_count="$(json_read "${_info}" '.disk_count')"
-	_nic_count="$(json_read "${_info}" '.nic_count')"
-
-	if [ -n "${_disk_count}" ] && [ "${_disk_count}" = "0" ]; then
-		errx "Warning!" \
-		    "\nCannot continue with the installation, no valid storage devices detected.\n"
-		return 1
-	fi
-	if [ -n "${_nic_count}" ] && [ "${_nic_count}" = "0" ]; then
-		errx "Warning!" \
-		    "\nCannot continue with the installation, no network interfaces detected.\n"
-		return 1
-	fi
-
 	return 0
 }
 

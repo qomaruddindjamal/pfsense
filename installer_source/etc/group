@@ -1,9 +1,9 @@
-wheel:*:0:root
+wheel:*:0:root,admin
 daemon:*:1:
 kmem:*:2:
 sys:*:3:
 tty:*:4:
-operator:*:5:root
+operator:*:5:root,admin
 mail:*:6:
 bin:*:7:
 news:*:8:
@@ -28,7 +28,7 @@ uucp:*:66:
 dialer:*:68:
 network:*:69:
 audit:*:77:
-www:*:80:
+www:*:80:admin
 u2f:*:116:
 ntpd:*:123:
 _ypldap:*:160:

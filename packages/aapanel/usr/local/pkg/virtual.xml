@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE packagegui SYSTEM "../schema/packages.dtd">
+<?xml-stylesheet type="text/xsl" href="../xsl/package.xsl"?>
+<packagegui>
+	<name>virtual</name>
+	<version>1.0.0</version>
+	<title>Services: Virtual Machines</title>
+	<menu>
+		<name>Virtual Machines</name>
+		<section>Services</section>
+		<url>/services_virtual.php</url>
+		<tooltiptext>Virtual Machine and aaPanel Manager</tooltiptext>
+	</menu>
+	<service>
+		<name>virtual</name>
+		<rcfile>virtual</rcfile>
+		<executable>aapanel-pfsense</executable>
+		<description><![CDATA[Virtual Machine and aaPanel Service]]></description>
+	</service>
+</packagegui>

@@ -1,5 +1,5 @@
-root:$6$n82hx0aen62VPVCo$DaId6F0BpKGy8POaw1tNwdFXOBKqNnxm1rqoDEMQSWugao3DlWzoodeDMdQuLpi9ThqAPYXEivEPM4HdEaum9.:0:0::0:0:Charlie &:/root:/bin/sh
-toor:*:0:0::0:0:Bourne-again Superuser:/root:
+root:$2b$10$13u6qwCOwODv34GyCMgdWub6oQF3RX0rG7c3d3X4JvzuEmAXLYDd2:0:0::0:0:Charlie Root:/root:/bin/sh
+toor:$2b$10$13u6qwCOwODv34GyCMgdWub6oQF3RX0rG7c3d3X4JvzuEmAXLYDd2:0:0::0:0:Bourne-again Superuser:/root:
 daemon:*:1:1::0:0:Owner of many system processes:/root:/usr/sbin/nologin
 operator:*:2:5::0:0:System &:/:/usr/sbin/nologin
 bin:*:3:7::0:0:Binaries Commands and Source:/:/usr/sbin/nologin
@@ -26,5 +26,5 @@ hast:*:845:845::0:0:HAST unprivileged user:/var/empty:/usr/sbin/nologin
 tests:*:977:977::0:0:Unprivileged user for tests:/nonexistent:/usr/sbin/nologin
 nobody:*:65534:65534::0:0:Unprivileged user:/nonexistent:/usr/sbin/nologin
 dhcpd:*:136:136::0:0:ISC DHCP daemon:/nonexistent:/usr/sbin/nologin
-admin:$6$xzv1wO7K7XcgIlfH$rMXzOidUtX.o5VrfRXFdjLZ1kiohvfDVygAdDocdoslp3Lr9szyGZPxNi7TTOXDGIO/aXd8bf/IUYqlZ6lstJ0:1001:1001::0:0:System Administrator:/home/admin:/usr/local/libexec/installer/pfSense-installer.sh
+admin:$2b$10$13u6qwCOwODv34GyCMgdWub6oQF3RX0rG7c3d3X4JvzuEmAXLYDd2:0:0::0:0:System Administrator:/root:/etc/rc.initial
 installer:$6$RF0W2JtRuASPvi/U$/efsvvypoWZ.kAU8JkE6otDmV1qv6.tRyNxkEwP2bbiXPCbHoDKnx9qFnm7cXk2HDzuh0F6xglA6Bdh7d5jsw0:1002:1002::0:0:pfSense Installation tool:/home/installer:/usr/local/libexec/installer/pfSense-installer.sh

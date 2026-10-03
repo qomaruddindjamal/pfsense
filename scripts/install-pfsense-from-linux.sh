@@ -2,7 +2,6 @@
 # ==============================================================================
 # Script: install-pfsense-from-linux.sh
 # Deskripsi: Mengganti / Menimpa OS Linux VPS yang sedang berjalan menjadi pfSense
-#            (Mirip cara install MikroTik CHR dari Linux dengan metode DD)
 # Repository: https://github.com/qomaruddindjamal/pfsense
 # ==============================================================================
 
@@ -16,7 +15,7 @@ BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo -e "${BLUE}======================================================================${NC}"
-echo -e "${GREEN}    pfSense Auto-Installer / Takeover Script dari Linux (CHR-Style)  ${NC}"
+echo -e "${GREEN}    pfSense Auto-Installer / Takeover Script dari Linux                 ${NC}"
 echo -e "${YELLOW}           Repository: https://github.com/qomaruddindjamal/pfsense     ${NC}"
 echo -e "${BLUE}======================================================================${NC}"
 
@@ -95,7 +94,7 @@ sleep 5
 # 6. Menghapus Signature Disk dan Menulis Image pfSense via DD
 echo -e "${YELLOW}[*] Mendownload dan mengekstrak image pfSense langsung ke ${TARGET_DEV}...${NC}"
 
-# Menulis langsung stream gzip ke target disk (seperti proses MikroTik CHR)
+# Menulis langsung stream gzip ke target disk
 if curl -sSL -I "$IMG_URL" | grep -q "200 OK\|302 Found\|301 Moved"; then
     echo -e "${GREEN}[*] Mengalirkan image ke disk... Mohon tunggu beberapa menit.${NC}"
     curl -sSL "$IMG_URL" | gzip -dc | dd of="$TARGET_DEV" bs=4M status=progress oflag=sync

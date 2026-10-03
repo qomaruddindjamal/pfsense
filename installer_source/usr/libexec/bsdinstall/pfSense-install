@@ -1,7 +1,6 @@
 #!/bin/sh
 #
-#
-# bsdinstall pfSense installation module.
+# pfSense Installer pfSense-install module.
 #
 # part of pfSense (https://www.pfsense.org)
 # Copyright (c) 2023-2024 Rubicon Communications, LLC (Netgate)
@@ -19,12 +18,517 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-BSDINSTALL_INC_PATH="/usr/libexec/bsdinstall"
-. "${BSDINSTALL_INC_PATH}/pfSense-common"
+INSTALL_INC_PATH="/usr/local/libexec/installer"
+. "${INSTALL_INC_PATH}/pfSense-common"
+. "${INSTALL_INC_PATH}/pfSense-LED"
 
-INSTALL_CMD="${CURL} ${CURLFLAGS} -d "no-umount=1" \
-    ${INSTALLER_URL}/install | ${TEE} ${INSTALL_LOG}"
-dialog --backtitle "$(get_title)" --title " Installation Details " \
-    --prgbox "${INSTALL_CMD}" 40 120
+CERTS_PATH="/etc/ssl/certs"
+RESOLV_CONF="/etc/resolv.conf"
+BOOTSTRAP_FILES="/etc/master.passwd /etc/group /etc/rc.subr /etc/services \
+/etc/shells /bin/kenv /bin/sh /usr/bin/tar /usr/bin/uname /usr/sbin/pkg \
+/usr/sbin/service /libexec/ld-elf.so.1"
+DIR_INIT_CREATE="/boot /boot/loader.conf.d /cf/conf"
 
-exit $?
+chroot_setup() {
+	local _destdir
+	[ "${#}" -ne 1 ] && return 1
+	_destdir="${1}"
+
+	unset _CHROOT_DIR
+
+	[ -f "${RESOLV_CONF}" ] && /bin/cp -f "${RESOLV_CONF}" "${_destdir}${RESOLV_CONF}" 2>/dev/null || true
+	/bin/mkdir -p "${_destdir}/dev"
+	/sbin/mount -t devfs -o nocover devfs "${_destdir}/dev" 2>/dev/null || true
+	_CHROOT_DIR="${_destdir}"
+	return 0
+}
+
+chroot_cleanup() {
+	if [ -n "${_CHROOT_DIR}" ]; then
+		"${UMOUNT}" -f "${_CHROOT_DIR}/dev" 2>/dev/null || true
+	fi
+	unset _CHROOT_DIR
+	return 0
+}
+
+pfSense_install() {
+	local _destdir _model
+	[ "${#}" -lt 1 ] && return 1
+	_destdir="${1}"
+	[ "${#}" -gt 1 ] && _model="${2}"
+
+	for dir in ${DIR_INIT_CREATE}; do
+		[ -d "${_destdir}/${dir}" ] && continue
+		mkdir -p "${_destdir}/${dir}" > /dev/null 2>&1
+	done
+
+	OFFLINE_PKG_DIR="/packages/All"
+	[ ! -d "${OFFLINE_PKG_DIR}" ] && [ -d "/usr/local/share/packages/offline" ] && OFFLINE_PKG_DIR="/usr/local/share/packages/offline"
+	[ ! -d "${OFFLINE_PKG_DIR}" ] && [ -d "/pkg" ] && OFFLINE_PKG_DIR="/pkg"
+
+	echo "======================================================================"
+	echo "        MEMULAI INSTALASI OFFLINE PFSENSE DARI MEDIA LOKAL            "
+	echo "======================================================================"
+
+	# 1. Ekstrak sistem dasar FreeBSD (base.txz)
+	echo "[1/6] Memasang sistem operasi dasar FreeBSD..."
+	local _base_extracted=0
+	if [ -f "/usr/local/share/pfSense/base.txz" ]; then
+		/usr/bin/tar -xf "/usr/local/share/pfSense/base.txz" -C "${_destdir}" 2>/dev/null && _base_extracted=1
+	elif [ -f "${OFFLINE_PKG_DIR}/base.txz" ]; then
+		/usr/bin/tar -xf "${OFFLINE_PKG_DIR}/base.txz" -C "${_destdir}" 2>/dev/null && _base_extracted=1
+	fi
+
+	if [ ${_base_extracted} -eq 0 ]; then
+		local _bpkg="${OFFLINE_PKG_DIR}/pfSense-base-2.9.0.pkg"
+		if [ -f "${_bpkg}" ]; then
+			/usr/bin/tar -xf "${_bpkg}" -C "${_destdir}" 2>/dev/null || true
+		elif [ -f "${OFFLINE_PKG_DIR}/pfSense-base-2.9.0.pkg.partaa" ]; then
+			/bin/cat "${OFFLINE_PKG_DIR}"/pfSense-base-2.9.0.pkg.part* | /usr/bin/tar -xf - -C "${_destdir}" 2>/dev/null || true
+		fi
+		if [ -f "${_destdir}/usr/local/share/pfSense/base.txz" ]; then
+			/usr/bin/tar -xf "${_destdir}/usr/local/share/pfSense/base.txz" -C "${_destdir}" 2>/dev/null && _base_extracted=1
+		fi
+	fi
+
+	# Ekstrak initial.txz jika tersedia
+	if [ -f "${_destdir}/usr/local/share/pfSense/initial.txz" ]; then
+		/usr/bin/tar -xf "${_destdir}/usr/local/share/pfSense/initial.txz" -C "${_destdir}" 2>/dev/null || true
+	elif [ -f "/usr/local/share/pfSense/initial.txz" ]; then
+		/usr/bin/tar -xf "/usr/local/share/pfSense/initial.txz" -C "${_destdir}" 2>/dev/null || true
+	fi
+
+	# 2. Ekstrak Kernel dan Bootloader pfSense
+	echo "[2/6] Memasang Kernel dan Bootloader pfSense..."
+	for _kpkg in "${OFFLINE_PKG_DIR}"/pfSense-kernel-*.pkg; do
+		if [ -f "${_kpkg}" ]; then
+			echo "  -> Memasang $(basename "${_kpkg}")..."
+			/usr/bin/tar -xf "${_kpkg}" -C "${_destdir}" 2>/dev/null || true
+			break
+		fi
+	done
+	for _bpkg in "${OFFLINE_PKG_DIR}"/pfSense-boot-*.pkg; do
+		if [ -f "${_bpkg}" ]; then
+			echo "  -> Memasang $(basename "${_bpkg}")..."
+			/usr/bin/tar -xf "${_bpkg}" -C "${_destdir}" 2>/dev/null || true
+			break
+		fi
+	done
+
+	# 3. Ekstrak Konfigurasi Awal dan Sistem GUI pfSense
+	echo "[3/6] Memasang Konfigurasi Awal dan Sistem GUI pfSense..."
+	for _cpkg in "${OFFLINE_PKG_DIR}"/pfSense-default-config-*.pkg; do
+		if [ -f "${_cpkg}" ]; then
+			echo "  -> Memasang $(basename "${_cpkg}")..."
+			/usr/bin/tar -xf "${_cpkg}" -C "${_destdir}" 2>/dev/null || true
+			break
+		fi
+	done
+	for _spkg in "${OFFLINE_PKG_DIR}"/pfSense-system-*.pkg "${OFFLINE_PKG_DIR}"/pfSense-2.9.0.pkg; do
+		if [ -f "${_spkg}" ]; then
+			echo "  -> Memasang $(basename "${_spkg}")..."
+			/usr/bin/tar -xf "${_spkg}" -C "${_destdir}" 2>/dev/null || true
+		fi
+	done
+
+	# 4. Ekstrak seluruh runtime packages pfSense (PHP 8.5, WebConfigurator, Daemons, Tools)
+	echo "[4/6] Memasang runtime packages pfSense..."
+	if [ -d "${OFFLINE_PKG_DIR}" ]; then
+		for _pkg in "${OFFLINE_PKG_DIR}"/*.pkg; do
+			[ ! -f "${_pkg}" ] && continue
+			case "${_pkg}" in
+				*pfSense-base*|*wireguard*|*xray*|*kvm*)
+					continue
+					;;
+				*)
+					/usr/bin/tar -xf "${_pkg}" -C "${_destdir}" 2>/dev/null || true
+					;;
+			esac
+		done
+	fi
+
+	# 5. Ekstrak Paket Tambahan Offline (WireGuard, Xray-core, KVM)
+	echo "[5/6] Memasang Paket Tambahan Offline (WireGuard, Xray-core, KVM aaPanel)..."
+	for _custom in wireguard-pfsense.pkg xray-pfsense.pkg kvm.pkg pfSense-pkg-WireGuard-*.pkg; do
+		for _dir in "${OFFLINE_PKG_DIR}" /pkg /usr/local/share/packages/offline; do
+			for _f in "${_dir}"/${_custom}; do
+				if [ -f "${_f}" ]; then
+					echo "  -> Memasang $(basename "${_f}")..."
+					/usr/bin/tar -xf "${_f}" -C "${_destdir}" 2>/dev/null || true
+					break
+				fi
+			done
+		done
+	done
+
+	# Pastikan file WebGUI dan XML deskriptor paket tambahan terpasang
+	/bin/mkdir -p "${_destdir}/usr/local/www" "${_destdir}/usr/local/pkg" "${_destdir}/usr/local/www/css"
+	for _p in /usr/local/www/vpn_wg.php /usr/local/www/vpn_xray.php /usr/local/www/services_virtual.php /usr/local/www/head.inc /usr/local/www/foot.inc; do
+		[ -f "${_p}" ] && /bin/cp -f "${_p}" "${_destdir}/usr/local/www/" 2>/dev/null || true
+	done
+	for _x in /usr/local/pkg/wireguard.xml /usr/local/pkg/xray.xml /usr/local/pkg/virtual.xml; do
+		[ -f "${_x}" ] && /bin/cp -f "${_x}" "${_destdir}/usr/local/pkg/" 2>/dev/null || true
+	done
+	[ -f /usr/local/www/css/sidebar-layout.css ] && /bin/cp -f /usr/local/www/css/sidebar-layout.css "${_destdir}/usr/local/www/css/sidebar-layout.css" 2>/dev/null || true
+
+
+	# 6. Pastikan file konfigurasi pfSense dan direktori penting tersedia
+	echo "[6/6] Finalisasi konfigurasi sistem..."
+	/bin/mkdir -p "${_destdir}/dev" "${_destdir}/proc" "${_destdir}/tmp" "${_destdir}/mnt" "${_destdir}/cf/conf" "${_destdir}/var/db/pkg"
+	/bin/chmod 1777 "${_destdir}/tmp" 2>/dev/null || true
+
+	# Salin database paket terdaftar agar kernel dan seluruh paket dikenali sistem
+	if [ -f "/var/db/pkg/local.sqlite" ]; then
+		/bin/cp -f "/var/db/pkg/local.sqlite" "${_destdir}/var/db/pkg/local.sqlite"
+	fi
+
+	# Aktifkan seluruh ekstensi PHP (.ini.sample -> .ini) termasuk gettext, curl, openssl
+	if [ -d "${_destdir}/usr/local/etc/php" ]; then
+		for _s in "${_destdir}"/usr/local/etc/php/ext-*.ini.sample; do
+			[ -f "${_s}" ] && /bin/cp -f "${_s}" "${_s%.sample}" 2>/dev/null || true
+		done
+	fi
+
+	# Pastikan konfigurasi config.xml ada di /cf/conf dan /conf
+	/bin/mkdir -p "${_destdir}/cf/conf" "${_destdir}/conf"
+	if [ -f "${_destdir}/conf.default/config.xml" ]; then
+		/bin/cp -f "${_destdir}/conf.default/config.xml" "${_destdir}/cf/conf/config.xml"
+		/bin/cp -f "${_destdir}/conf.default/config.xml" "${_destdir}/conf/config.xml"
+	elif [ -f "/conf.default/config.xml" ]; then
+		/bin/cp -f "/conf.default/config.xml" "${_destdir}/cf/conf/config.xml"
+		/bin/cp -f "/conf.default/config.xml" "${_destdir}/conf/config.xml"
+	fi
+
+	if [ -f "/tmp/recovered_config/config.xml" ]; then
+		/bin/cp -f "/tmp/recovered_config/config.xml" "${_destdir}/cf/conf/config.xml"
+		/bin/cp -f "/tmp/recovered_config/config.xml" "${_destdir}/conf/config.xml"
+	fi
+
+	# Daftarkan WireGuard, Xray-core, dan Virtual Machines ke menu WebGUI di config.xml
+	if [ -f "${_destdir}/cf/conf/config.xml" ] && ! grep -q "<installedpackages>" "${_destdir}/cf/conf/config.xml" 2>/dev/null; then
+		awk '
+		/<\/pfsense>/ {
+			print "\t<installedpackages>"
+			print "\t\t<package>"
+			print "\t\t\t<name>WireGuard</name>"
+			print "\t\t\t<descr><![CDATA[WireGuard Fast VPN Service]]></descr>"
+			print "\t\t\t<version>1.0.0</version>"
+			print "\t\t\t<configurationfile>wireguard.xml</configurationfile>"
+			print "\t\t</package>"
+			print "\t\t<package>"
+			print "\t\t\t<name>xray</name>"
+			print "\t\t\t<descr><![CDATA[Xray-core Multi-Protocol Anti-Censorship Service]]></descr>"
+			print "\t\t\t<version>1.8.24</version>"
+			print "\t\t\t<configurationfile>xray.xml</configurationfile>"
+			print "\t\t</package>"
+			print "\t\t<package>"
+			print "\t\t\t<name>virtual</name>"
+			print "\t\t\t<descr><![CDATA[Virtual Machine and aaPanel Manager]]></descr>"
+			print "\t\t\t<version>1.0.0</version>"
+			print "\t\t\t<configurationfile>virtual.xml</configurationfile>"
+			print "\t\t</package>"
+			print "\t\t<menu>"
+			print "\t\t\t<name>WireGuard</name>"
+			print "\t\t\t<section>VPN</section>"
+			print "\t\t\t<url>/vpn_wg.php</url>"
+			print "\t\t\t<tooltiptext>Manage WireGuard VPN Tunnels and Peers</tooltiptext>"
+			print "\t\t</menu>"
+			print "\t\t<menu>"
+			print "\t\t\t<name>Xray-core</name>"
+			print "\t\t\t<section>VPN</section>"
+			print "\t\t\t<url>/vpn_xray.php</url>"
+			print "\t\t\t<tooltiptext>Configure Xray-core (VLESS, VMess, Trojan, Socks5, TUN and Routing)</tooltiptext>"
+			print "\t\t</menu>"
+			print "\t\t<menu>"
+			print "\t\t\t<name>Virtual Machines</name>"
+			print "\t\t\t<section>Services</section>"
+			print "\t\t\t<url>/services_virtual.php</url>"
+			print "\t\t\t<tooltiptext>Virtual Machine and aaPanel Manager</tooltiptext>"
+			print "\t\t</menu>"
+			print "\t\t<service>"
+			print "\t\t\t<name>wireguard</name>"
+			print "\t\t\t<rcfile>wireguard-pfsense</rcfile>"
+			print "\t\t\t<executable>wg-quick</executable>"
+			print "\t\t\t<description><![CDATA[WireGuard Fast VPN Service]]></description>"
+			print "\t\t</service>"
+			print "\t\t<service>"
+			print "\t\t\t<name>xray</name>"
+			print "\t\t\t<rcfile>xray</rcfile>"
+			print "\t\t\t<executable>xray</executable>"
+			print "\t\t\t<description><![CDATA[Xray-core Multi-Protocol Anti-Censorship Service]]></description>"
+			print "\t\t</service>"
+			print "\t\t<service>"
+			print "\t\t\t<name>virtual</name>"
+			print "\t\t\t<rcfile>virtual</rcfile>"
+			print "\t\t\t<executable>aapanel-pfsense</executable>"
+			print "\t\t\t<description><![CDATA[Virtual Machine and aaPanel Service]]></description>"
+			print "\t\t</service>"
+			print "\t</installedpackages>"
+		}
+		{ print }
+		' "${_destdir}/cf/conf/config.xml" > "${_destdir}/cf/conf/config.xml.tmp" && \
+		/bin/mv -f "${_destdir}/cf/conf/config.xml.tmp" "${_destdir}/cf/conf/config.xml"
+		/bin/cp -f "${_destdir}/cf/conf/config.xml" "${_destdir}/conf/config.xml" 2>/dev/null || true
+	fi
+
+	# Konfigurasi modul kernel untuk WireGuard, Xray (TUN), dan Hypervisor Bhyve
+	[ -f "${_destdir}/boot/loader.conf" ] || touch "${_destdir}/boot/loader.conf"
+	for _mod in if_wg if_tun vmm nmdm if_tap if_bridge; do
+		if ! grep -q "${_mod}_load=\"YES\"" "${_destdir}/boot/loader.conf" 2>/dev/null; then
+			echo "${_mod}_load=\"YES\"" >> "${_destdir}/boot/loader.conf"
+		fi
+	done
+
+
+	# Konfigurasi repositori lokal
+	/bin/mkdir -p "${_destdir}/usr/local/etc/pkg/repos"
+	/bin/cat << 'EOF' > "${_destdir}/usr/local/etc/pkg/repos/pfSense.conf"
+FreeBSD: { enabled: no }
+pfSense: {
+  url: "file:///packages",
+  mirror_type: "NONE",
+  enabled: yes
+}
+EOF
+
+	# Set product_name agar seluruh script pfSense mengenali nama sistem
+	echo "pfSense" > "${_destdir}/etc/product_name"
+
+	# Direktori runtime yang dibutuhkan daemon pfSense (php-fpm, nginx, var)
+	/bin/mkdir -p "${_destdir}/usr/local/var/run" \
+	              "${_destdir}/usr/local/var/log" \
+	              "${_destdir}/usr/local/lib" \
+	              "${_destdir}/var/run" \
+	              "${_destdir}/var/etc" \
+	              "${_destdir}/var/log/nginx" \
+	              "${_destdir}/var/tmp/nginx" \
+	              "${_destdir}/usr/local/etc/nginx" \
+	              "${_destdir}/usr/local/etc/php" 2>/dev/null || true
+
+	[ -f "${_destdir}/usr/local/etc/php-fpm.conf.default" ] && /bin/cp -f "${_destdir}/usr/local/etc/php-fpm.conf.default" "${_destdir}/usr/local/etc/php-fpm.conf" 2>/dev/null || true
+	[ -d "${_destdir}/usr/local/etc/php-fpm.d" ] && [ -f "${_destdir}/usr/local/etc/php-fpm.d/www.conf.default" ] && /bin/cp -f "${_destdir}/usr/local/etc/php-fpm.d/www.conf.default" "${_destdir}/usr/local/etc/php-fpm.d/www.conf" 2>/dev/null || true
+
+	# Salin file konfigurasi grup dan otentikasi FreeBSD/pfSense
+	/bin/mkdir -p "${_destdir}/etc" "${_destdir}/root"
+
+	# 1. /etc/shells - wajib memuat /bin/sh dan /etc/rc.initial agar login tidak ditolak PAM
+	/bin/cat << 'EOF' > "${_destdir}/etc/shells"
+/bin/sh
+/bin/csh
+/bin/tcsh
+/etc/rc.initial
+EOF
+
+	# 2. /etc/group - memastikan group wheel:0 dan www:80 serta admins:1999 tersedia
+	/bin/cat << 'EOF' > "${_destdir}/etc/group"
+wheel:*:0:root,admin
+daemon:*:1:
+kmem:*:2:
+sys:*:3:
+tty:*:4:
+operator:*:5:root
+mail:*:6:
+bin:*:7:
+news:*:8:
+man:*:9:
+games:*:13:
+staff:*:20:
+sshd:*:22:
+smmsp:*:25:
+mailnull:*:26:
+guest:*:31:
+bind:*:53:
+unbound:*:59:
+proxy:*:62:
+_pflogd:*:64:
+_dhcp:*:65:
+uucp:*:66:
+dialer:*:68:
+network:*:69:
+audit:*:77:
+www:*:80:admin
+ntpd:*:123:
+_ypldap:*:160:
+hast:*:845:
+tests:*:977:
+nogroup:*:65533:
+nobody:*:65534:
+dhcpd:*:136:
+all:*:1998:
+admins:*:1999:admin
+EOF
+
+	# 3. /etc/master.passwd - password pfsense ($2b$10$13u6qwCOwODv34GyCMgdWub6oQF3RX0rG7c3d3X4JvzuEmAXLYDd2) untuk root, toor, dan admin
+	/bin/cat << 'EOF' > "${_destdir}/etc/master.passwd"
+root:$2b$10$13u6qwCOwODv34GyCMgdWub6oQF3RX0rG7c3d3X4JvzuEmAXLYDd2:0:0::0:0:Charlie Root:/root:/bin/sh
+toor:$2b$10$13u6qwCOwODv34GyCMgdWub6oQF3RX0rG7c3d3X4JvzuEmAXLYDd2:0:0::0:0:Bourne-again Superuser:/root:/bin/sh
+admin:$2b$10$13u6qwCOwODv34GyCMgdWub6oQF3RX0rG7c3d3X4JvzuEmAXLYDd2:0:0::0:0:System Administrator:/root:/etc/rc.initial
+daemon:*:1:1::0:0:Owner of many system processes:/root:/usr/sbin/nologin
+operator:*:2:5::0:0:System &:/:/usr/sbin/nologin
+bin:*:3:7::0:0:Binaries Commands and Source:/:/usr/sbin/nologin
+tty:*:4:65533::0:0:Tty Sandbox:/:/usr/sbin/nologin
+kmem:*:5:65533::0:0:KMem Sandbox:/:/usr/sbin/nologin
+games:*:7:13::0:0:Games pseudo-user:/:/usr/sbin/nologin
+news:*:8:8::0:0:News Subsystem:/:/usr/sbin/nologin
+man:*:9:9::0:0:Mister Man Pages:/usr/share/man:/usr/sbin/nologin
+sshd:*:22:22::0:0:Secure Shell Daemon:/var/empty:/usr/sbin/nologin
+smmsp:*:25:25::0:0:Sendmail Submission User:/var/spool/clientmqueue:/usr/sbin/nologin
+mailnull:*:26:26::0:0:Sendmail Default User:/var/spool/mqueue:/usr/sbin/nologin
+bind:*:53:53::0:0:Bind Sandbox:/:/usr/sbin/nologin
+unbound:*:59:59::0:0:Unbound DNS Resolver:/var/unbound:/usr/sbin/nologin
+proxy:*:62:62::0:0:Packet Filter pseudo-user:/nonexistent:/usr/sbin/nologin
+_pflogd:*:64:64::0:0:pflogd privsep user:/var/empty:/usr/sbin/nologin
+_dhcp:*:65:65::0:0:dhcp programs:/var/empty:/usr/sbin/nologin
+uucp:*:66:66::0:0:UUCP pseudo-user:/var/spool/uucppublic:/usr/local/libexec/uucp/uucico
+pop:*:68:6::0:0:Post Office Owner:/nonexistent:/usr/sbin/nologin
+auditdistd:*:78:77::0:0:Auditdistd unprivileged user:/var/empty:/usr/sbin/nologin
+www:*:80:80::0:0:World Wide Web Owner:/nonexistent:/usr/sbin/nologin
+ntpd:*:123:123::0:0:NTP Daemon:/var/db/ntp:/usr/sbin/nologin
+_ypldap:*:160:160::0:0:YP LDAP unprivileged user:/var/empty:/usr/sbin/nologin
+hast:*:845:845::0:0:HAST unprivileged user:/var/empty:/usr/sbin/nologin
+tests:*:977:977::0:0:Unprivileged user for tests:/nonexistent:/usr/sbin/nologin
+nobody:*:65534:65534::0:0:Unprivileged user:/nonexistent:/usr/sbin/nologin
+dhcpd:*:136:136::0:0:ISC DHCP daemon:/nonexistent:/usr/sbin/nologin
+EOF
+
+	# 4. Bangun database passwd FreeBSD
+	/usr/sbin/pwd_mkdb -p -d "${_destdir}/etc" "${_destdir}/etc/master.passwd" 2>/dev/null || true
+
+	# 5. Konfigurasi login.conf
+	if [ -f /etc/login.conf ]; then
+		/bin/cp -f /etc/login.conf "${_destdir}/etc/login.conf" 2>/dev/null || true
+		/usr/bin/cap_mkdb "${_destdir}/etc/login.conf" 2>/dev/null || true
+	fi
+
+	# 6. Salin .profile untuk root agar langsung menampilkan menu pfSense (/etc/rc.initial)
+	/bin/cat << 'EOF' > "${_destdir}/root/.profile"
+export TERM=xterm
+[ -f /etc/rc.initial ] && exec /etc/rc.initial
+EOF
+
+	# 7. Salin file konfigurasi runtime webConfigurator (nginx)
+	/bin/mkdir -p "${_destdir}/usr/local/etc/nginx"
+	if [ -d /usr/local/etc/nginx ]; then
+		/bin/cp -n /usr/local/etc/nginx/* "${_destdir}/usr/local/etc/nginx/" 2>/dev/null || true
+	fi
+	for _f in mime.types fastcgi_params scgi_params uwsgi_params nginx.conf; do
+		if [ ! -f "${_destdir}/usr/local/etc/nginx/${_f}" ] && [ -f "${_destdir}/usr/local/etc/nginx/${_f}-dist" ]; then
+			/bin/cp -f "${_destdir}/usr/local/etc/nginx/${_f}-dist" "${_destdir}/usr/local/etc/nginx/${_f}"
+		fi
+	done
+
+
+	# Konfigurasi bootloader dan fstab
+	if [ -f /usr/local/libexec/installer/pfSense-post-install ]; then
+		local _post_d=""
+		_kdisks="$(/sbin/sysctl -n kern.disks 2>/dev/null)"
+		for _d in ${_kdisks}; do
+			case "${_d}" in
+				cd*|pass*|md*) continue ;;
+				*) _post_d="${_post_d} -d ${_d}"; break ;;
+			esac
+		done
+		/bin/sh /usr/local/libexec/installer/pfSense-post-install \
+			-D "${_destdir}" \
+			-F "ZFS" \
+			-S "GPT" \
+			-B "BIOS+UEFI" \
+			${_post_d} 2>/dev/null || true
+	fi
+
+	echo "[✓] Pemasangan seluruh paket pfSense offline selesai dengan sukses!"
+	return 0
+}
+
+
+#
+# Main
+#
+
+unset CFG_ENC
+unset CFG_DEV
+unset CFG_DIR
+unset CFG_TYPE
+unset DESTDIR
+unset MODEL
+unset VERSION
+
+while getopts em:r:t:D:M:R:V: opt; do
+	case "${opt}" in
+	"e")
+		CFG_ENC=1
+		;;
+	"r")
+		CFG_DEV="${OPTARG}"
+		;;
+	"t")
+		CFG_TYPE="${OPTARG}"
+		;;
+	"D")
+		DESTDIR="${OPTARG}"
+		;;
+	"M")
+		MODEL="${OPTARG}"
+		;;
+	"R")
+		CFG_DIR="${OPTARG}"
+		;;
+	"V")
+		VERSION="${OPTARG}"
+		;;
+	*)
+		exit 1
+		;;
+	esac
+done
+
+if [ -z "${DESTDIR}" ]; then
+	echo "Error: No destination path."
+	exit 1
+fi
+
+[ -n "${MODEL}" ] && \
+    led_installing "${MODEL}"
+
+[ -n "${VERSION}" ] && \
+    printf "\nInstalling %s\n" "${VERSION}"
+
+if [ -n "${CFG_ENC}" ] && [ "${CFG_ENC}" = 1 ]; then
+	ENC_LABEL="encrypted "
+else
+	ENC_LABEL=""
+fi
+if [ -n "${CFG_DEV}" ] && [ -n "${CFG_TYPE}" ] && [ "${CFG_TYPE}" = "RECOVERED" ]; then
+	printf "\nSelected %sconfiguration file: Recovered from existing installation (%s).\n" \
+	    "${ENC_LABEL}" "${CFG_DEV}"
+elif [ -n "${CFG_DIR}" ] && [ -n "${CFG_TYPE}" ] && [ "${CFG_TYPE}" = "MEDIA" ]; then
+	if [ "${CFG_DIR}" = "root" ]; then
+		CFG_DIR_LABEL="/"
+	else
+		CFG_DIR_LABEL="/${CFG_DIR}/"
+	fi
+	printf "\nSelected %sconfiguration file: Restore from installation media (%sconfig.xml).\n" \
+	    "${ENC_LABEL}" "${CFG_DIR_LABEL}"
+else
+	printf "\nSelected configuration file: default (blank) configuration.\n"
+fi
+
+# Setup the chroot.
+if ! chroot_setup "${DESTDIR}"; then
+	echo "Error: Failed to set up the pkg chroot environment."
+	exit 1
+fi
+
+# Install pfSense packages
+if ! pfSense_install "${DESTDIR}" "${MODEL}"; then
+	echo "Error: Failed to install pfSense."
+	exit 1
+fi
+
+# Remove unecessary files, unmount the devfs.
+if ! chroot_cleanup; then
+	echo "Error: Failed to clean up the pkg chroot environment."
+	exit 1
+fi
+
+exit 0

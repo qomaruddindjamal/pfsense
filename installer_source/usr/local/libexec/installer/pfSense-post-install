@@ -365,10 +365,10 @@ pfSense_post_install() {
 		case "${opt}" in
 		"M")
 			_model="${OPTARG}"
-			shift 2
 			;;
 		esac
 	done
+	shift $(( ${OPTIND} - 1 ))
 
 	[ "${#}" -lt 6 ] && \
 	    return 1
@@ -405,7 +405,7 @@ pfSense_post_install() {
 
 	# Configure the ESPs for the disk(s)
 	_p="p"
-	[ "${_scheme}" == "MBR" ] && \
+	[ "${_scheme}" = "MBR" ] && \
 	    _p="s"
 	_add_efi_boot="1"	# Only add an efi boot entry for one ESP at this time
 	for _disk in ${_disks}; do
@@ -498,15 +498,12 @@ while getopts d:p:s:wB:D:F:M:S:V: opt; do
 		    DISKS="${DISKS} "
 		DISKS="${DISKS}${OPTARG}"
 		NDISKS=$(( ${NDISKS} + 1 ))
-		shift 2
 		;;
 	"p")
 		PRODUCT_EXT="${OPTARG}"
-		shift 2
 		;;
 	"s")
 		SERIAL_CONSOLE="${OPTARG}"
-		shift 2
 		case "${SERIAL_CONSOLE}" in
 		"efi"|"serial"|"serial-only")
 			;;
@@ -518,7 +515,6 @@ while getopts d:p:s:wB:D:F:M:S:V: opt; do
 		;;
 	"w")
 		SWAP_DISABLED="1"
-		shift
 		;;
 	"B")
 		BOOTTYPE="${OPTARG}"
@@ -530,11 +526,9 @@ while getopts d:p:s:wB:D:F:M:S:V: opt; do
 			exit 1
 			;;
 		esac
-		shift 2
 		;;
 	"D")
 		DESTDIR="${OPTARG}"
-		shift 2
 		;;
 	"F")
 		FSTYPE="${OPTARG}"
@@ -546,11 +540,9 @@ while getopts d:p:s:wB:D:F:M:S:V: opt; do
 			exit 1
 			;;
 		esac
-		shift 2
 		;;
 	"M")
 		MODEL="${OPTARG}"
-		shift 2
 		;;
 	"S")
 		SCHEME="${OPTARG}"
@@ -562,17 +554,16 @@ while getopts d:p:s:wB:D:F:M:S:V: opt; do
 			exit 1
 			;;
 		esac
-		shift 2
 		;;
 	"V")
 		PRODUCT_VER=" \(${OPTARG}\)"
-		shift 2
 		;;
 	*)
 		exit 1
 		;;
 	esac
 done
+shift $(( ${OPTIND} - 1 ))
 
 if [ "${NDISKS}" -lt 1 ] || [ "${NDISKS}" -gt 128 ]; then
 	echo "Error: Invalid disk count: ${NDISKS}"
@@ -607,36 +598,5 @@ fi
 echo
 echo "pfSense Post Installation setup .. done."
 echo
-
-# ==============================================================================
-# Auto Offline Package Installer for WireGuard, Xray-core, and aaPanel
-# ==============================================================================
-echo "==> Memulai instalasi paket offline pfSense..."
-OFFLINE_DIR="/usr/local/share/packages/offline"
-[ ! -d "${OFFLINE_DIR}" ] && [ -d "/packages/All" ] && OFFLINE_DIR="/packages/All"
-[ ! -d "${OFFLINE_DIR}" ] && [ -d "/packages" ] && OFFLINE_DIR="/packages"
-[ ! -d "${OFFLINE_DIR}" ] && [ -d "/pkg" ] && OFFLINE_DIR="/pkg"
-if [ -d "${OFFLINE_DIR}" ]; then
-    echo "==> Menyalin dan memasang paket offline ke target sistem (${DESTDIR})..."
-    mkdir -p "${DESTDIR}/tmp/pkg_offline"
-    cp -r ${OFFLINE_DIR}/* "${DESTDIR}/tmp/pkg_offline/" 2>/dev/null || true
-    
-    # Auto-join split packages if any
-    for _part in "${DESTDIR}/tmp/pkg_offline"/*.pkg.partaa; do
-        if [ -f "${_part}" ]; then
-            _target="${_part%.partaa}"
-            [ ! -f "${_target}" ] && cat "${_target}".part* > "${_target}" 2>/dev/null || true
-        fi
-    done
-
-    # Jalankan pkg add secara offline di chroot sistem target
-    if [ -x "${DESTDIR}/usr/local/sbin/pkg-static" ]; then
-        chroot "${DESTDIR}" /usr/local/sbin/pkg-static add /tmp/pkg_offline/wireguard-pfsense.pkg 2>/dev/null || true
-        chroot "${DESTDIR}" /usr/local/sbin/pkg-static add /tmp/pkg_offline/xray-pfsense.pkg 2>/dev/null || true
-        chroot "${DESTDIR}" /usr/local/sbin/pkg-static add /tmp/pkg_offline/kvm.pkg 2>/dev/null || true
-    fi
-    rm -rf "${DESTDIR}/tmp/pkg_offline"
-    echo "==> Paket offline (WireGuard, Xray-core, KVM aaPanel) berhasil dipasang ke sistem!"
-fi
 
 exit 0

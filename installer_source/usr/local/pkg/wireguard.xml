@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!DOCTYPE packagegui SYSTEM "../schema/packages.dtd">
+<?xml-stylesheet type="text/xsl" href="../xsl/package.xsl"?>
+<packagegui>
+	<name>wireguard</name>
+	<version>1.0.0</version>
+	<title>VPN: WireGuard</title>
+	<menu>
+		<name>WireGuard</name>
+		<section>VPN</section>
+		<url>/vpn_wg.php</url>
+		<tooltiptext>Manage WireGuard VPN Tunnels and Peers</tooltiptext>
+	</menu>
+	<service>
+		<name>wireguard</name>
+		<rcfile>wireguard-pfsense</rcfile>
+		<executable>wg-quick</executable>
+		<description><![CDATA[WireGuard Fast VPN Service]]></description>
+	</service>
+</packagegui>

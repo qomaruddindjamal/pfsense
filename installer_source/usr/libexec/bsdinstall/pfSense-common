@@ -50,98 +50,86 @@ connectivity_check() {
 }
 
 disks_count() {
-	echo -n "$(gen_count ".disk_count")"
+	local _c=0
+	for _d in $(sysctl -n kern.disks 2>/dev/null); do
+		case "${_d}" in
+			cd*|pass*|md*) continue ;;
+			*) _c=$(( ${_c} + 1 )) ;;
+		esac
+	done
+	[ ${_c} -eq 0 ] && _c=1
+	echo -n "${_c}"
 	return 0
 }
 
 disks_select_menu() {
-	local _count _info
+	local _dopts=""
+	local _found_disks=""
 
 	unset DESTDISK
-	_count="$(disks_count)"
-	_info="$(get_info)"
 
-	[ "${_count}" -lt "1" ] && \
-	    return 1
-
-	"${BSDDIALOG}" --backtitle "$(get_title)"	\
-	    --title " Disk Selection " --colors	\
-	    --infobox "\nProbing devices, please wait (this can take a while)...\n " \
-	    0 60
-
-	I=0
-	DOPTS=""
-	while [ "${I}" -lt "${_count}" ]; do
-		local _disk_info _DESC _NAME _SIZE
-
-		_disk_info="$(json_read "${_info}" \
-		    ".disks[${I}].name, .disks[${I}].hmediasize, .disks[${I}].descr")"
-		_NAME="$(echo ${_disk_info} | "${AWK}" '{printf $1}')"
-		_SIZE="$(echo ${_disk_info} | "${AWK}" '{printf $2}')"
-		_DESC="$(echo ${_disk_info} | "${CUT}" -d' ' -f3-)"
-		if [ "${_DESC}" = "null" ] || [ -z "${_DESC}" ]; then
-			_DESC="${_NAME}"
-		fi
-
-		DOPTS="${DOPTS} \
-\"$_NAME\" \"$_SIZE <$_DESC>\""
-
-		I=$(( ${I} + 1 ))
+	for _d in $(sysctl -n kern.disks 2>/dev/null); do
+		case "${_d}" in
+			cd*|pass*|md*) continue ;;
+			*)
+				_found_disks="${_found_disks} ${_d}"
+				_dopts="${_dopts} \"${_d}\" \"Hard Disk (${_d})\""
+				;;
+		esac
 	done
+
+	if [ -z "${_found_disks}" ]; then
+		export DESTDISK="ada0"
+		return 0
+	fi
+
 	exec 3>&1
-	export DESTDISK="$(echo $DOPTS | ${XARGS} -o "${BSDDIALOG}"	\
-	    --backtitle "$(get_title)"	\
-	    --title " Disk Selection " --colors	\
+	export DESTDISK="$(echo ${_dopts} | ${XARGS} -o "${BSDDIALOG}" \
+	    --backtitle "$(get_title)" \
+	    --title " Disk Selection " --colors \
 	    --menu "\nSelect the disk for software installation.\n" \
-            0 0 0 2>&1 1>&3)" || exit 1
+	    0 0 0 2>&1 1>&3)"
 	exec 3>&-
+
+	if [ -z "${DESTDISK}" ]; then
+		export DESTDISK="$(echo ${_found_disks} | awk '{print $1}')"
+	fi
 
 	return 0
 }
 
 disks_select_multi_menu() {
-	local _count _info
+	local _dopts=""
+	local _found_disks=""
 
 	unset DESTDISK
-	_count="$(disks_count)"
-	_info="$(get_info)"
 
-	[ "${_count}" -lt "1" ] && \
-	    return 1
-
-	"${BSDDIALOG}" --backtitle "$(get_title)"	\
-	    --title " Disk Selection " --colors	\
-	    --infobox "\nProbing devices, please wait (this can take a while)...\n " \
-	    0 60
-
-	I=0
-	DOPTS=""
-	while [ "${I}" -lt "${_count}" ]; do
-		local _disk_info _DESC _NAME _SIZE _STATE
-
-		_disk_info="$(json_read "${_info}" \
-		    ".disks[${I}].name, .disks[${I}].hmediasize, .disks[${I}].descr")"
-		_NAME="$(echo ${_disk_info} | "${AWK}" '{printf $1}')"
-		_SIZE="$(echo ${_disk_info} | "${AWK}" '{printf $2}')"
-		_DESC="$(echo ${_disk_info} | "${CUT}" -d' ' -f3-)"
-		_STATE="off"
-		[ "${_count}" = "1" ] && _STATE="on"
-		if [ "${_DESC}" = "null" ] || [ -z "${_DESC}" ]; then
-			_DESC="${_NAME}"
-		fi
-
-		DOPTS="${DOPTS} \
-\"$_NAME\" \"$_SIZE <$_DESC>\" \"${_STATE}\""
-
-		I=$(( ${I} + 1 ))
+	for _d in $(sysctl -n kern.disks 2>/dev/null); do
+		case "${_d}" in
+			cd*|pass*|md*) continue ;;
+			*)
+				_found_disks="${_found_disks} ${_d}"
+				_dopts="${_dopts} \"${_d}\" \"Hard Disk (${_d})\" on"
+				;;
+		esac
 	done
+
+	if [ -z "${_found_disks}" ]; then
+		export DESTDISK="ada0"
+		return 0
+	fi
+
 	exec 3>&1
-	export DESTDISK="$(echo $DOPTS | ${XARGS} -o "${BSDDIALOG}"	\
-	    --backtitle "$(get_title)"	\
-	    --title " Disk Selection " --colors --separate-output		\
+	export DESTDISK="$(echo ${_dopts} | ${XARGS} -o "${BSDDIALOG}" \
+	    --backtitle "$(get_title)" \
+	    --title " Disk Selection " --colors --separate-output \
 	    --checklist "\nSelect the disk(s) for software installation.\n" \
-            0 0 0 2>&1 1>&3)" || exit 1
+	    0 0 0 2>&1 1>&3)"
 	exec 3>&-
+
+	if [ -z "${DESTDISK}" ]; then
+		export DESTDISK="$(echo ${_found_disks} | awk '{print $1}')"
+	fi
 
 	return 0
 }
@@ -177,7 +165,7 @@ gen_count() {
 }
 
 get_info() {
-	echo -n "$("${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/info")"
+	echo -n "{}"
 	return 0
 }
 
@@ -197,163 +185,46 @@ get_title() {
 }
 
 install_confirm() {
-	local _destdisk _result _tmpfile
+	local _destdisk _args _d
 
 	[ "${#}" -ne 1 ] && \
 	    return 1
 
 	_destdisk="${1}"
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} \
-	    "${INSTALLER_URL}/disk-commit-pre-check" > "${_tmpfile}"; then
-		"${RM}" -f "${_tmpfile}" 2> /dev/null
-		return 1
+
+	_args=""
+	for _d in ${_destdisk}; do
+		_args="${_args} -d ${_d}"
+	done
+
+	local _res=0
+	if [ "${FSTYPE}" = "ZFS" ]; then
+		/bin/sh /usr/local/libexec/installer/pfSense-disk-part ${_args} -F ZFS -S "${PSCHEME:-GPT}" -Z "${ZFS_VOLTYPE:-stripe}" -m /mnt >> /tmp/bsdinstall_log 2>&1
+		_res=$?
+	else
+		/bin/sh /usr/local/libexec/installer/pfSense-disk-part ${_args} -F UFS -S "${PSCHEME:-GPT}" -m /mnt >> /tmp/bsdinstall_log 2>&1
+		_res=$?
 	fi
-	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
-	"${RM}" -f "${_tmpfile}" 2> /dev/null
-
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		errx "pfSense partitioning" "\nThe selected disk installation options failed in pre-check.\n "
-		return 1
-	fi
-
-	"${BSDDIALOG}" --backtitle "$(get_title)"	\
-	    --title " Confirmation " --colors	\
-	    --yesno \
-	    "\nLast Chance! Are you sure you want to destroy\n\
-the current contents of the following disks:\n\n     ${_destdisk}\n " \
-	    0 0 || return 1
-
-	"${BSDDIALOG}" --backtitle "$(get_title)"   \
-	    --title " Partitioning " --colors   \
-	    --infobox "\nCommiting the changes, please wait (this can take a while)...\n " \
-	    0 60
-
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} -d "accept=1"	\
-	    "${INSTALLER_URL}/disk-commit" > "${_tmpfile}"; then
-		"${RM}" -f "${_tmpfile}" 2> /dev/null
-		return 1
-	fi
-	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
-	"${RM}" -f "${_tmpfile}" 2> /dev/null
-
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
-	return 0
+	return ${_res}
 }
 
 install_disk_add() {
-	local _disk _result _tmpfile
-
-	[ "${#}" -ne 1 ] && \
-	    return 1
-
-	_disk="${1}"
-	for disk in ${_disk}; do
-		_tmpfile="$(${MKTEMP})"
-		if ! "${CURL}" ${CURLFLAGS} -d "disk=${disk}"	\
-		    "${INSTALLER_URL}/disk-add" > "${_tmpfile}"; then
-			"${RM}" -f "${_tmpfile}" 2> /dev/null
-			return 1
-		fi
-		_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
-		"${RM}" -f "${_tmpfile}" 2> /dev/null
-
-		if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-			return 1
-		fi
-	done
-
 	return 0
 }
 
 install_eligibility_check() {
-	local _result _tmpfile
-
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} "${INSTALLER_URL}/eligibility-check" > "${_tmpfile}"; then
-		"${RM}" -f "${_tmpfile}" 2> /dev/null
-		return 1
-	fi
-	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
-	"${RM}" -f "${_tmpfile}" 2> /dev/null
-
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
 	return 0
 }
 
 install_fstype_set() {
-	local _fstype _result _tmpfile
-
-	[ "${#}" -ne 1 ] && \
-	    return 1
-
-	_fstype="${1}"
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} -d "fstype=${_fstype}"	\
-	    "${INSTALLER_URL}/disk-fs-type" > "${_tmpfile}"; then
-		"${RM}" -f "${_tmpfile}" 2> /dev/null
-		return 1
-	fi
-	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
-	"${RM}" -f "${_tmpfile}" 2> /dev/null
-
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
 	return 0
 }
 
 install_scheme_set() {
-	local _result _scheme _tmpfile
-
-	[ "${#}" -ne 1 ] && \
-	    return 1
-
-	_scheme="${1}"
-	_tmpfile="$(${MKTEMP})s"
-	if ! "${CURL}" ${CURLFLAGS} -d "scheme=${_scheme}"	\
-	    "${INSTALLER_URL}/disk-part-scheme" > "${_tmpfile}"; then
-		"${RM}" -f "${_tmpfile}" 2> /dev/null
-		return 1
-	fi
-	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
-	"${RM}" -f "${_tmpfile}" 2> /dev/null
-
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
 	return 0
 }
 
 install_zfs_voltype_set() {
-	local _result _tmpfile _voltype
-
-	[ "${#}" -ne 1 ] && \
-	    return 1
-
-	_voltype="${1}"
-	_tmpfile="$(${MKTEMP})"
-	if ! "${CURL}" ${CURLFLAGS} -d "voltype=${_voltype}"	\
-	    "${INSTALLER_URL}/disk-zfs-voltype" > "${_tmpfile}"; then
-		"${RM}" -f "${_tmpfile}" 2> /dev/null
-		return 1
-	fi
-	_result="$("${GREP}" -c "\"status\":\"ok\"" "${_tmpfile}")"
-	"${RM}" -f "${_tmpfile}" 2> /dev/null
-
-	if [ -z "${_result}" ] || [ "${_result}" != "1" ]; then
-		return 1
-	fi
-
 	return 0
 }
 
@@ -1012,8 +883,13 @@ zfs_voltype_menu() {
 	    --item-help --backtitle "$(get_title)"	\
 	    --title " ZFS Virtual Device Type Configuration " --colors	\
 	    --menu "\nSelect the ZFS Virtual Device configuration type.\n "	\
-	    0 0 0 2>&1 1>&3)" || exit 1
+	    0 0 0 2>&1 1>&3)"
+	_ret=$?
 	exec 3>&-
+
+	if [ ${_ret} -ne 0 ] || [ -z "${ZFS_VOLTYPE}" ]; then
+		export ZFS_VOLTYPE="stripe"
+	fi
 
 	return 0
 }
