@@ -24,8 +24,8 @@ Repository ini menyediakan kode sumber installer resmi dari Netgate/pfSense ISO,
 1. **Paket Instalasi Offline ke Dalam ISO**:
    - Seluruh 5 paket offline (`wireguard-pfsense.pkg`, `xray-pfsense.pkg`, `speedtest.pkg`, `wifi.pkg`, dan `kvm.pkg`) telah disisipkan ke dalam direktori offline installer (`/usr/local/share/packages/offline/`).
    - Hook instalasi otomatis disematkan pada `installer_source/usr/local/libexec/installer/pfSense-install` dan `pfSense-post-install` sehingga saat instalasi dari ISO selesai, seluruh paket otomatis terpasang tanpa memerlukan koneksi internet.
-   - File ISO bootable offline: `pfsense-custom-offline-installer.iso` (4.6 GB).
-   - Tersedia skrip remaster ISO: `scripts/remaster_iso.sh`.
+   - File ISO & USB bootable offline: `pfsense-custom-offline-installer.iso` (1.11 GB), `.img` (1.11 GB), dan `.img.gz` (681 MB).
+   - Skrip pembuat citra & otomatisasi: `scripts/build_iso.sh` dan `scripts/auto_pilot.ps1`.
 
 2. **Integrasi Menu WebGUI pfSense**:
    - **VPN > WireGuard** (`/vpn_wg.php`): Mengelola interface `wg0`, status handshake, generate keypair, konfigurasi peer, dan full routing.
@@ -455,40 +455,26 @@ Paket Xray-core di pfSense memungkinkan router bertindak sebagai VPN gateway mul
 ## 📂 Struktur Direktori Repository
 
 ```
-├── .gitignore                          # Filter file besar (ISO/RAW images)
+├── .gitignore                          # Aturan filter Git (mengabaikan ISO, IMG, scripts/, packages/)
 ├── LICENSE                             # Lisensi Apache-2.0
-├── README.md                           # Dokumentasi utama (file ini)
-├── installer_source/                   # Kode sumber installer yang diekstrak dari ISO
-│   ├── boot/lua/                       # Skrip Lua bootloader pfSense
-│   ├── etc/                            # Konfigurasi sistem startup pfSense
-│   ├── usr/libexec/bsdinstall/         # Modul bsdinstall FreeBSD untuk pfSense
-│   ├── usr/local/libexec/installer/    # Shell installer pfSense (pfSense-installer.sh, dll)
+├── README.md                           # Dokumentasi utama proyek
+│
+├── installer_source/                   # Kode sumber installer teroptimasi (Pohon Media ISO)
+│   ├── boot/                           # Sektor bootloader BIOS (cdboot/isoboot), UEFI (efi.img) & Lua scripts
+│   ├── etc/                            # Konfigurasi sistem startup pfSense & dhclient
+│   ├── packages/                       # Paket instalasi runtime FreeBSD, kernel pfSense, & paket kustom
+│   │   └── All/                        # Berkas paket .pkg dan partisi pfSense-base terpisah
+│   ├── usr/libexec/bsdinstall/         # Modul instalasi sistem FreeBSD (auto, pfSense-install, zfsboot)
+│   ├── usr/local/libexec/installer/    # Shell installer pfSense offline (run-installer.sh, pfSense-installer.sh)
+│   ├── usr/local/share/packages/offline/ # Symlink terpadu ke paket offline kustom (wireguard, xray, kvm, wifi, speedtest)
 │   └── usr/local/www/web-installer/    # Web installer UI Netgate
-├── packages/
-│   ├── pkg/                            # Paket resmi siap pasang (.pkg)
-│   │   ├── wireguard-pfsense.pkg       # Modul kernel & WebGUI WireGuard
-│   │   ├── xray-pfsense.pkg            # Xray multi-protokol & WebGUI VPN
-│   │   └── kvm.pkg                 # Mesin Virtual & aaPanel di dalamnya
-│   ├── wireguard/                      # Skrip & konfigurasi WireGuard
-│   │   ├── install-wireguard.sh
-│   │   ├── wg0.conf.example
-│   │   └── README.md
-│   ├── xray/                           # Skrip & konfigurasi Xray-core
-│   │   ├── install-xray.sh
-│   │   ├── config.json                 # VLESS, VMess, Trojan, Socks5, TUN, Routing
-│   │   ├── xray.rc.d                   # Service daemon FreeBSD
-│   │   ├── pf-rules.conf               # Aturan redirect PF
-│   │   └── README.md
-│   └── aapanel/                        # Skrip & integrasi aaPanel
-│       ├── install-aapanel-linux.sh
-│       ├── setup-aapanel-bhyve.sh
-│       └── README.md
-└── scripts/
-    ├── build_pkg.py                    # Script pembuat paket .pkg
-    ├── remaster_iso.sh                 # Script remaster ISO offline
-    ├── install-pfsense-from-linux.sh   # Skrip takeover menimpa Linux ke pfSense
-    ├── setup-pfsense-all.sh            # Skrip otomatis pasang WireGuard & Xray
-    └── config.xml.template             # Template konfigurasi pfSense otomatis
+│
+└── [Disimpan di Lokal Saja / Diabaikan oleh .gitignore]:
+    ├── packages/                       # Berkas sumber kode paket lokal (aaPanel, speedtest, wifi, wireguard, xray)
+    ├── scripts/                        # Skrip otomasi pengembang (auto_pilot.ps1, build_iso.sh, remaster_iso.sh)
+    ├── pfsense-custom-offline-installer.iso    # Citra Universal Hybrid ISO (1.11 GB)
+    ├── pfsense-custom-offline-installer.img    # Citra Raw USB Disk Image (1.11 GB)
+    └── pfsense-custom-offline-installer.img.gz # Citra USB terkompresi GZIP untuk flashdisk (681 MB)
 ```
 
 ---
