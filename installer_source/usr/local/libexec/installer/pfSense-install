@@ -283,6 +283,35 @@ pfSense_install() {
 		/bin/cp -f "${_destdir}/cf/conf/config.xml" "${_destdir}/conf/config.xml" 2>/dev/null || true
 	fi
 
+	# Pastikan WAN tidak memblokir Private IP (RFC 1918) & tambahkan rule Allow WAN Management
+	# agar WebGUI / SSH tidak ter-lockout saat membuat Virtual IP atau reload firewall di lab/VM
+	if [ -f "${_destdir}/cf/conf/config.xml" ]; then
+		awk '
+		/<filter>/ {
+			print
+			if (!seen_allow) {
+				print "\t\t<rule>"
+				print "\t\t\t<type>pass</type>"
+				print "\t\t\t<ipprotocol>inet</ipprotocol>"
+				print "\t\t\t<descr><![CDATA[Allow WAN Management WebGUI & SSH]]></descr>"
+				print "\t\t\t<interface>wan</interface>"
+				print "\t\t\t<source>"
+				print "\t\t\t\t<any></any>"
+				print "\t\t\t</source>"
+				print "\t\t\t<destination>"
+				print "\t\t\t\t<any></any>"
+				print "\t\t\t</destination>"
+				print "\t\t</rule>"
+				seen_allow = 1
+			}
+			next
+		}
+		{ gsub(/<blockpriv><\/blockpriv>/, ""); gsub(/<blockpriv\/>/, ""); print }
+		' "${_destdir}/cf/conf/config.xml" > "${_destdir}/cf/conf/config.xml.tmp" && \
+		/bin/mv -f "${_destdir}/cf/conf/config.xml.tmp" "${_destdir}/cf/conf/config.xml"
+		/bin/cp -f "${_destdir}/cf/conf/config.xml" "${_destdir}/conf/config.xml" 2>/dev/null || true
+	fi
+
 	# Konfigurasi modul kernel untuk WireGuard, Xray (TUN), dan Hypervisor Bhyve
 	[ -f "${_destdir}/boot/loader.conf" ] || touch "${_destdir}/boot/loader.conf"
 	for _mod in if_wg if_tun vmm nmdm if_tap if_bridge; do
