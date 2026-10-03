@@ -91,9 +91,10 @@
 			// Desktop: Show & align MikroTik drop-right panel
 			function showDropRight($item) {
 				if (!isDesktop()) return;
+				var $flyout = $item.children('.sidebar-flyout');
+				if (!$flyout.length) return; // Menu tunggal (KVM / Terminal) tidak memiliki flyout
 				$('.sidebar-item').not($item).removeClass('open').find('.sidebar-flyout').hide();
 				$item.addClass('open');
-				var $flyout = $item.children('.sidebar-flyout');
 				if ($flyout.length) {
 					var itemRect = $item[0].getBoundingClientRect();
 					var sidebarWidth = $('#pf-sidebar').outerWidth();
@@ -139,6 +140,12 @@
 
 			// Click handler: Mobile accordion toggle OR Desktop MikroTik click-to-pin
 			$('.sidebar-link').on('click', function(e) {
+				if ($(this).hasClass('direct-link')) {
+					if (!isDesktop()) {
+						$('body').removeClass('sidebar-mobile-open');
+					}
+					return; // Menu tunggal langsung navigasi ke URL tujuan
+				}
 				e.preventDefault();
 				var $item = $(this).closest('.sidebar-item');
 
@@ -186,6 +193,13 @@
 						$parentItem.addClass('open');
 						$parentItem.find('.sidebar-flyout').show();
 					}
+				}
+			});
+
+			$('.sidebar-link.direct-link').each(function() {
+				var href = $(this).attr('href');
+				if (href && (href.indexOf(currentScript) !== -1)) {
+					$(this).closest('.sidebar-item').addClass('active');
 				}
 			});
 		});

@@ -545,30 +545,16 @@ if (are_notices_pending()) {
             $help_menu_title = 'Help';
         }
 
-		// KVM / Virtual Machines Dedicated Menu
-		$kvm_menu = array();
-		$kvm_menu[] = array(gettext("Virtual Machines"), "/services_virtual.php");
-		$kvm_menu[] = array(gettext("aaPanel Web (Port 8888)"), "http://" . htmlspecialchars($_SERVER["SERVER_ADDR"] ?? "192.168.1.1") . ":8888", "_blank");
-		$kvm_menu[] = array(gettext("Hypervisor Modules"), "/services_virtual.php#modules");
-		$kvm_menu[] = array(gettext("Storage & Conf"), "/services_virtual.php#conf");
-		$kvm_menu = msort(array_merge($kvm_menu, return_ext_menu("KVM")), 0);
-
-		// Terminal Dedicated Menu
-		$terminal_menu = array();
-		$terminal_menu[] = array(gettext("Web Terminal"), "/diag_terminal.php");
-		$terminal_menu[] = array(gettext("Command Prompt"), "/diag_command.php");
-		$terminal_menu = msort(array_merge($terminal_menu, return_ext_menu("Terminal")), 0);
-
 		$categories = [
 			['id' => 'system',      'name' => 'System',      'icon' => 'fa-solid fa-gears',          'menu' => $system_menu,      'href' => null],
 			['id' => 'interfaces',  'name' => 'Interfaces',  'icon' => 'fa-solid fa-network-wired',  'menu' => $interfaces_menu,  'href' => null],
 			['id' => 'firewall',    'name' => 'Firewall',    'icon' => 'fa-solid fa-shield-halved',  'menu' => $firewall_menu,    'href' => null],
 			['id' => 'services',    'name' => 'Services',    'icon' => 'fa-solid fa-cubes',          'menu' => $services_menu,    'href' => null],
 			['id' => 'vpn',         'name' => 'VPN',         'icon' => 'fa-solid fa-key',            'menu' => $vpn_menu,         'href' => null],
-			['id' => 'kvm',         'name' => 'KVM',         'icon' => 'fa-solid fa-server',         'menu' => $kvm_menu,         'href' => null],
+			['id' => 'kvm',         'name' => 'KVM',         'icon' => 'fa-solid fa-server',         'url' => '/services_virtual.php'],
 			['id' => 'status',      'name' => 'Status',      'icon' => 'fa-solid fa-chart-line',     'menu' => $status_menu,      'href' => null],
 			['id' => 'diagnostics', 'name' => 'Diagnostics', 'icon' => 'fa-solid fa-toolbox',        'menu' => $diagnostics_menu, 'href' => null],
-			['id' => 'terminal',    'name' => 'Terminal',    'icon' => 'fa-solid fa-terminal',       'menu' => $terminal_menu,    'href' => null],
+			['id' => 'terminal',    'name' => 'Terminal',    'icon' => 'fa-solid fa-terminal',       'url' => '/diag_terminal.php'],
 			['id' => 'help',        'name' => $help_menu_title, 'icon' => 'fa-solid fa-circle-question','menu' => $help_menu,    'href' => '_blank']
 		];
 
@@ -577,12 +563,18 @@ if (are_notices_pending()) {
 			if ($cat['name'] == 'Help' && g_get('disablehelpmenu')) {
 				continue;
 			}
-			$menu_output = output_menu($cat['menu'], $cat['href'], $cat['name']);
-			if (strlen($menu_output) == 0) continue;
-
-			$is_active = (strpos($menu_output, $current_page) !== false);
+			$has_sub = empty($cat['url']);
+			if ($has_sub) {
+				$menu_output = output_menu($cat['menu'], $cat['href'], $cat['name']);
+				if (strlen($menu_output) == 0) continue;
+				$is_active = (strpos($menu_output, $current_page) !== false);
+			} else {
+				$menu_output = "";
+				$is_active = ($current_page == basename($cat['url']));
+			}
 	?>
 		<li class="sidebar-item <?=$is_active ? 'active' : ''?>">
+			<?php if ($has_sub): ?>
 			<a href="#sub-<?=$cat['id']?>" class="sidebar-link" aria-expanded="<?=$is_active ? 'true' : 'false'?>">
 				<i class="<?=$cat['icon']?> sidebar-icon"></i>
 				<span class="sidebar-text"><?=gettext($cat['name'])?></span>
@@ -597,6 +589,12 @@ if (are_notices_pending()) {
 					<?=$menu_output?>
 				</ul>
 			</div>
+			<?php else: ?>
+			<a href="<?=$cat['url']?>" class="sidebar-link direct-link" title="<?=gettext($cat['name'])?>">
+				<i class="<?=$cat['icon']?> sidebar-icon"></i>
+				<span class="sidebar-text"><?=gettext($cat['name'])?></span>
+			</a>
+			<?php endif; ?>
 		</li>
 	<?php endforeach; ?>
 	</ul>
