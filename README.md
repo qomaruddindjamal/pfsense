@@ -115,7 +115,167 @@ sh packages/xray/install-xray.sh
 
 ---
 
-## 🌐 3. Integrasi aaPanel
+## 🛡️ 4. Panduan Lengkap: Membuat & Menghubungkan WireGuard Client di pfSense
+
+Bagian ini memandu Anda menghubungkan pfSense sebagai **WireGuard Client (Peer)** ke sebuah WireGuard Server (misalnya: MikroTik CHR VPS, Ubuntu/Debian Linux VPS, atau router kantor pusat).
+
+### 📐 Contoh Skenario / Topologi
+- **Server WireGuard (MikroTik CHR / VPS Linux)**:
+  - IP Publik / Domain: `103.93.162.168`
+  - Port Listening UDP: `13235` (atau port pilihan Anda, misal `51820`)
+  - IP Tunnel Server: `10.10.99.1/24`
+  - Public Key Server: `r9T/01aMVJ0WI2v2PaODiKdUxg9eZCPtY/cCEmk0uBc=`
+- **pfSense (Client / Site Office / Home Lab)**:
+  - IP Tunnel Client: `10.10.99.2/24`
+  - Listen Port: `51820`
+  - MTU: `1420`
+  - Keepalive: `25` detik
+
+---
+
+### 🖥️ Metode 1: Konfigurasi Melalui WebGUI pfSense (Disarankan)
+
+#### Langkah 1: Aktifkan Service WireGuard
+1. Buka browser dan login ke WebGUI pfSense (`https://<IP_PFSENSE>`).
+2. Masuk ke menu **VPN > WireGuard > Settings**.
+3. Centang opsi **Enable WireGuard**.
+4. Klik **Save**.
+
+#### Langkah 2: Buat Tunnel Baru (Client Interface)
+1. Masuk ke tab **VPN > WireGuard > Tunnels**, klik **+ Add Tunnel**.
+2. Isi formulir konfigurasi Tunnel:
+   - **Enable**: Centang `Enable Tunnel`.
+   - **Description**: Contoh: `Tunnel to VPS Server`.
+   - **Listen Port**: Masukkan `51820` (atau kosongkan untuk acak).
+   - **Interface Keys**:
+     - Klik tombol **Generate** untuk membuat kunci baru secara otomatis.
+     - **Private Key**: Akan terisi otomatis (rahasia pfSense).
+     - **Public Key**: Salin kunci ini karena **harus didaftarkan pada server WireGuard**.
+   - **Interface Addresses**:
+     - Klik **+ Add Address**.
+     - **Address**: `10.10.99.2`
+     - **Subnet / Prefix**: `24`
+     - **Description**: `Tunnel IPv4`
+   - **MTU**: Masukkan `1420` (disarankan untuk kompatibilitas enkapsulasi paket).
+3. Klik **Save Tunnel**.
+
+#### Langkah 3: Tambahkan Peer (Server WireGuard)
+1. Masuk ke tab **VPN > WireGuard > Peers**, klik **+ Add Peer**.
+2. Isi formulir konfigurasi Peer:
+   - **Enable**: Centang `Enable Peer`.
+   - **Tunnel**: Pilih tunnel yang baru dibuat (`tun_wg0`).
+   - **Description**: Contoh: `VPS CHR Server (103.93.162.168)`.
+   - **Dynamic Endpoint**: **Jangan dicentang** (uncheck), karena server memiliki IP publik / host statis.
+   - **Endpoint**: Masukkan IP publik atau hostname server, contoh: `103.93.162.168`.
+   - **Endpoint Port**: Masukkan port listening server, contoh: `13235` (atau `51820`).
+   - **Public Key**: Masukkan **Public Key milik Server WireGuard**.
+   - **Allowed IPs**:
+     - Tambahkan subnet yang diizinkan melintasi tunnel:
+       - `10.10.99.0/24` (Subnet tunnel VPN).
+       - (Opsional) Jika ingin mengakses subnet LAN di belakang server (misal `192.168.1.0/24`), tambahkan baris baru.
+       - (Opsional) Jika ingin semua trafik internet dialihkan ke server: masukkan `0.0.0.0/0`.
+   - **Persistent Keepalive**: Masukkan `25` (sangat penting jika pfSense berada di balik NAT / ISP rumahan agar sesi tunnel tidak ditutup oleh router upstream).
+3. Klik **Save Peer**.
+4. Setelah kembali ke daftar, klik tombol **Apply Changes** berwarna oranye di bagian atas layar.
+
+#### Langkah 4: Buat Firewall Rule di pfSense
+Agar pfSense mengizinkan lalu lintas data dan respons ping (ICMP) melintasi tunnel WireGuard:
+1. Masuk ke menu **Firewall > Rules**.
+2. Pilih tab **WireGuard** (Interface Group).
+3. Klik **Add** (ikon panah ke atas) untuk membuat rule:
+   - **Action**: `Pass`
+   - **Interface**: `WireGuard`
+   - **Address Family**: `IPv4`
+   - **Protocol**: `Any`
+   - **Source**: `Any`
+   - **Destination**: `Any`
+   - **Description**: `Allow all WireGuard traffic`
+4. Klik **Save**, lalu klik tombol **Apply Changes**.
+
+#### Langkah 5: Konfigurasi di Sisi Server (Wajib!)
+
+Sebelum koneksi berjalan, server WireGuard harus mendaftarkan Public Key pfSense:
+
+* **Jika Server menggunakan MikroTik RouterOS (CHR / Routerboard)**:
+  ```routeros
+  /interface/wireguard/peers/add interface=wg-pfsense \
+      public-key="<PUBLIC_KEY_PFSENSE>" \
+      allowed-address=10.10.99.2/32 \
+      comment="pfSense Client Peer"
+  ```
+  *(Pastikan firewall MikroTik mengizinkan port UDP WireGuard pada chain `input`)*:
+  ```routeros
+  /ip firewall filter add chain=input action=accept protocol=udp dst-port=13235 comment="Allow WireGuard" place-before=1
+  ```
+
+* **Jika Server menggunakan Linux (Ubuntu/Debian `/etc/wireguard/wg0.conf`)**:
+  ```ini
+  [Peer]
+  PublicKey = <PUBLIC_KEY_PFSENSE>
+  AllowedIPs = 10.10.99.2/32
+  ```
+  Lalu muat ulang konfigurasi: `wg syncconf wg0 <(wg-quick strip wg0)`
+
+#### Langkah 6: Uji & Verifikasi Koneksi
+1. Masuk ke **Status > WireGuard** di WebGUI pfSense.
+2. Periksa status Peer:
+   - **Latest Handshake**: Menampilkan waktu aktif (contoh: *10 seconds ago*).
+   - **Transfer**: Nilai data diterima (RX) dan dikirim (TX) terus bertambah.
+3. Lakukan Ping Test:
+   - Buka menu **Diagnostics > Ping**.
+   - Hostname: `10.10.99.1` (IP tunnel server).
+   - IP Protocol: `IPv4`.
+   - Source Address: `WireGuard` atau `tun_wg0`.
+   - Klik **Ping**: Hasil harus `0.0% packet loss` dengan latensi rendah (~16-18 ms).
+
+---
+
+### 💻 Metode 2: Konfigurasi Otomatis via Shell / CLI pfSense
+
+Jika Anda mengonfigurasi pfSense langsung dari shell atau skrip otomatis:
+
+1. Buat pasangan kunci (KeyPair):
+   ```sh
+   wg genkey | tee /etc/wireguard/client_private.key | wg pubkey > /etc/wireguard/client_public.key
+   ```
+2. Buat file konfigurasi `/usr/local/etc/wireguard/wg0.conf`:
+   ```ini
+   [Interface]
+   PrivateKey = <ISI_DARI_client_private.key>
+   Address = 10.10.99.2/24
+   ListenPort = 51820
+   MTU = 1420
+
+   [Peer]
+   PublicKey = <PUBLIC_KEY_MILIK_SERVER>
+   Endpoint = 103.93.162.168:13235
+   AllowedIPs = 10.10.99.0/24
+   PersistentKeepalive = 25
+   ```
+3. Jalankan antarmuka tunnel:
+   ```sh
+   wg-quick up wg0
+   ```
+4. Cek status koneksi:
+   ```sh
+   wg show
+   ping -c 4 10.10.99.1
+   ```
+
+---
+
+### 🔧 Tips & Penyelesaian Masalah (Troubleshooting)
+
+| Gejala | Penyebab Umum | Solusi |
+| :--- | :--- | :--- |
+| **Tidak ada Handshake** (*No handshake*) | 1. Port UDP di server tertutup firewall.<br>2. Endpoint IP atau Port salah.<br>3. Public Key tertukar atau salah salin. | 1. Buka port UDP pada firewall VPS/Cloud provider.<br>2. Cek kembali IP dan port endpoint server.<br>3. Pastikan Public Key pfSense didaftarkan di server, dan Public Key server didaftarkan di pfSense. |
+| **Handshake ada, tapi Ping RTO / Timeout** | 1. Firewall pfSense memblokir paket masuk.<br>2. Allowed IPs di server tidak mencakup IP pfSense.<br>3. Firewall di server memblokir ICMP. | 1. Pastikan rule **Pass** pada **Firewall > Rules > WireGuard** sudah dibuat dan diapply.<br>2. Cek `allowed-address` di server apakah sudah mencakup `10.10.99.2/32`.<br>3. Cek firewall chain input/forward di server. |
+| **Koneksi terputus setelah beberapa menit** | NAT timeout pada router/modem ISP sebelum pfSense. | Pastikan kolom **Persistent Keepalive** diisi `25` detik pada konfigurasi Peer di pfSense. |
+| **Koneksi lambat atau web tertentu tidak terbuka** | Masalah Fragmentasi MTU paket. | Turunkan MTU pada Tunnel pfSense menjadi `1420` atau `1360` (terutama pada koneksi PPPoE). |
+
+---
+
+## 🌐 5. Integrasi aaPanel
 
 > **PENTING Mengenai Arsitektur Sistem:**
 > - **pfSense** berbasis **FreeBSD** dan telah memiliki antarmuka WebGUI bawaan lengkap (Nginx + PHP) untuk routing, firewall, NAT, dan VPN.
