@@ -204,9 +204,9 @@
 				return;
 			}
 
-			if (currentScript === 'vpn_wg.php') {
+			if (window.location.pathname.indexOf('/wg/') !== -1 || currentScript.startsWith('vpn_wg_') || currentScript === 'status_wireguard.php') {
 				$('.sidebar-item').removeClass('active');
-				$('.sidebar-link.direct-link[href="/vpn_wg.php"]').closest('.sidebar-item').addClass('active');
+				$('.sidebar-link.direct-link[href="/wg/vpn_wg_tunnels.php"]').closest('.sidebar-item').addClass('active');
 				return;
 			}
 

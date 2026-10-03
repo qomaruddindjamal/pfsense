@@ -388,6 +388,28 @@ body.sidebar-collapsed #topmenu .navbar-brand svg#logo {
     color: #4da3ff;
 }
 
+.sidebar-icon-wg {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    margin-right: 10px;
+    vertical-align: middle;
+    flex-shrink: 0;
+    color: #c92a2a;
+    transition: color 0.15s ease, transform 0.15s ease;
+}
+.sidebar-icon-wg svg {
+    width: 16px;
+    height: 16px;
+}
+.sidebar-link:hover .sidebar-icon-wg,
+.sidebar-item.active .sidebar-icon-wg {
+    color: #ff5252;
+    transform: scale(1.1);
+}
+
 .sidebar-text {
     flex-grow: 1;
     white-space: nowrap;
