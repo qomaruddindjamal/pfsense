@@ -246,7 +246,7 @@ case "$1" in
   stop) service xray stop ;;
   restart) service xray restart ;;
   status) service xray status ;;
-  test) /usr/local/bin/xray -test -config /usr/local/etc/xray/config.json ;;
+  test) /usr/local/bin/xray run -test -c /usr/local/etc/xray/config.json ;;
   version) /usr/local/bin/xray version ;;
   *)
     echo "Penggunaan: xray-control {start|stop|restart|status|test|version}"

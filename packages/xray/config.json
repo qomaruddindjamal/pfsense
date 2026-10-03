@@ -2,18 +2,28 @@
   "log": {
     "access": "/var/log/xray/access.log",
     "error": "/var/log/xray/error.log",
-    "loglevel": "warning"
+    "loglevel": "warning",
+    "dnsLog": true
+  },
+  "dns": {
+    "servers": [
+      "1.1.1.1",
+      "8.8.8.8",
+      "localhost"
+    ],
+    "queryStrategy": "UseIP"
   },
   "inbounds": [
     {
-      "tag": "vless-in",
-      "port": 443,
+      "tag": "vless-reality-in",
+      "port": 8443,
       "protocol": "vless",
       "settings": {
         "clients": [
           {
-            "id": "e44c211b-12d8-4f8e-a9b0-137a54a7e930",
-            "flow": "xtls-rprx-vision"
+            "id": "d7e26a8f-287c-482a-a92c-6338b556f891",
+            "flow": "xtls-rprx-vision",
+            "email": "admin@pfsense.local"
           }
         ],
         "decryption": "none"
@@ -25,25 +35,35 @@
           "show": false,
           "dest": "www.microsoft.com:443",
           "xver": 0,
-          "serverNames": ["www.microsoft.com"],
-          "privateKey": "CHANGE_WITH_XRAY_X25519_KEY",
-          "shortIds": ["0123456789abcdef"]
+          "serverNames": [
+            "www.microsoft.com"
+          ],
+          "privateKey": "-HjAcnXaeoW-A2b7B3_AOM3i9hG4pfjF58Ns5kEaiTQ",
+          "shortIds": [
+            "0123456789abcdef"
+          ]
         }
       },
       "sniffing": {
         "enabled": true,
-        "destOverride": ["http", "tls", "quic"]
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ],
+        "routeOnly": false
       }
     },
     {
-      "tag": "vmess-in",
-      "port": 8443,
+      "tag": "vmess-ws-in",
+      "port": 8080,
       "protocol": "vmess",
       "settings": {
         "clients": [
           {
-            "id": "e44c211b-12d8-4f8e-a9b0-137a54a7e930",
-            "alterId": 0
+            "id": "d7e26a8f-287c-482a-a92c-6338b556f891",
+            "alterId": 0,
+            "email": "user@pfsense.local"
           }
         ]
       },
@@ -55,7 +75,10 @@
       },
       "sniffing": {
         "enabled": true,
-        "destOverride": ["http", "tls"]
+        "destOverride": [
+          "http",
+          "tls"
+        ]
       }
     },
     {
@@ -65,21 +88,14 @@
       "settings": {
         "clients": [
           {
-            "password": "pfsense-trojan-password"
+            "password": "pfsense-trojan-password",
+            "email": "trojan@pfsense.local"
           }
         ]
       },
       "streamSettings": {
         "network": "tcp",
-        "security": "tls",
-        "tlsSettings": {
-          "certificates": [
-            {
-              "certificateFile": "/usr/local/etc/xray/server.crt",
-              "keyFile": "/usr/local/etc/xray/server.key"
-            }
-          ]
-        }
+        "security": "none"
       }
     },
     {
@@ -103,7 +119,11 @@
       },
       "sniffing": {
         "enabled": true,
-        "destOverride": ["http", "tls", "quic"]
+        "destOverride": [
+          "http",
+          "tls",
+          "quic"
+        ]
       }
     }
   ],
@@ -123,22 +143,11 @@
           "type": "none"
         }
       }
-    },
-    {
-      "tag": "proxy-out",
-      "protocol": "socks",
-      "settings": {
-        "servers": [
-          {
-            "address": "127.0.0.1",
-            "port": 1080
-          }
-        ]
-      }
     }
   ],
   "routing": {
     "domainStrategy": "IPIfNonMatch",
+    "domainMatcher": "hybrid",
     "rules": [
       {
         "type": "field",
@@ -151,16 +160,7 @@
         "type": "field",
         "outboundTag": "direct",
         "ip": [
-          "geoip:private",
-          "geoip:id"
-        ]
-      },
-      {
-        "type": "field",
-        "outboundTag": "direct",
-        "domain": [
-          "geosite:private",
-          "geosite:id"
+          "geoip:private"
         ]
       },
       {
