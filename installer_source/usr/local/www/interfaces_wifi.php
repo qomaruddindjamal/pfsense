@@ -375,10 +375,23 @@ display_top_tabs($tab_array);
         <div class="panel-heading">
             <i class="fa-solid fa-tower-broadcast text-primary" style="margin-right: 8px;"></i>
             <?=gettext("Access Point (AP / Hotspot Mode)")?>
+            <?php if (($status['mode'] ?? '') == 'ap'): ?>
+                <span class="badge badge-wifi-connected pull-right" style="margin-top: 3px;">
+                    <i class="fa-solid fa-circle-check"></i> <?=gettext("AP Active")?>
+                </span>
+            <?php endif; ?>
         </div>
         <div class="panel-body">
+            <?php if (!empty($status['is_vm'])): ?>
+                <div class="alert alert-info" style="border-left: 4px solid #17a2b8; margin-bottom: 20px;">
+                    <i class="fa-solid fa-circle-info fa-lg" style="margin-right: 6px;"></i>
+                    <strong><?=gettext("VirtualBox / Hypervisor Environment Detected:")?></strong><br>
+                    <?=gettext("Hypervisors emulate virtual Ethernet network controllers rather than physical RF radio antennas. Clicking <strong>'Start Access Point'</strong> will activate the <strong>Virtual AP Hotspot Gateway</strong> on <code>192.168.88.1/24</code> for routing & DHCP testing. On native bare-metal hardware with PCIe/USB Wi-Fi (Intel, Atheros, Realtek), physical over-the-air radio is broadcast automatically.")?>
+                </div>
+            <?php endif; ?>
+
             <p class="text-muted">
-                <?=gettext("Broadcast a Wi-Fi hotspot from pfSense. Requires a supported wireless card that supports HostAP mode (e.g. Atheros, Intel, Realtek).")?>
+                <?=gettext("Broadcast a Wi-Fi hotspot from pfSense. Supports 802.11 b/g/n/ac on native wireless hardware and Virtual Hotspot Gateway in VM environments.")?>
             </p>
 
             <form class="form-horizontal" onsubmit="event.preventDefault(); submitAP();">
