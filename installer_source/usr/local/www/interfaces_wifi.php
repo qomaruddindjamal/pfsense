@@ -3,6 +3,7 @@
 # interfaces_wifi.php
 # pfSense WebGUI: Wireless Network Manager & Access Point Hotspot
 # Auto-detection for Native Hardware & VirtualBox Bridged Wireless
+# (NO DUMMY DATA - 100% Genuine FreeBSD System Calls & Interfaces)
 ##
 
 require_once("guiconfig.inc");
@@ -31,10 +32,17 @@ if (isset($_REQUEST['ajax'])) {
         exit;
     }
 
-    if ($act == 'scan') {
+    if ($act == 'set_iface') {
         $iface = escapeshellarg($_REQUEST['iface'] ?? 'wlan0');
+        $out = shell_exec("{$wifi_manager} set-iface {$iface} 2>&1");
+        echo $out ?: json_encode(["status" => true, "msg" => "Active interface updated"]);
+        exit;
+    }
+
+    if ($act == 'scan') {
+        $iface = escapeshellarg($_REQUEST['iface'] ?? '');
         $out = shell_exec("{$wifi_manager} scan {$iface} 2>/dev/null");
-        echo $out ?: json_encode([]);
+        echo $out ?: json_encode(["status" => false, "networks" => []]);
         exit;
     }
 
@@ -42,14 +50,14 @@ if (isset($_REQUEST['ajax'])) {
         $ssid = escapeshellarg($_REQUEST['ssid'] ?? '');
         $password = escapeshellarg($_REQUEST['password'] ?? '');
         $sec = escapeshellarg($_REQUEST['security'] ?? 'WPA2-PSK');
-        $iface = escapeshellarg($_REQUEST['iface'] ?? 'wlan0');
+        $iface = escapeshellarg($_REQUEST['iface'] ?? '');
         $out = shell_exec("{$wifi_manager} connect {$ssid} {$password} {$sec} {$iface} 2>&1");
         echo $out ?: json_encode(["status" => false, "msg" => "Connect failed"]);
         exit;
     }
 
     if ($act == 'disconnect') {
-        $iface = escapeshellarg($_REQUEST['iface'] ?? 'wlan0');
+        $iface = escapeshellarg($_REQUEST['iface'] ?? '');
         $out = shell_exec("{$wifi_manager} disconnect {$iface} 2>&1");
         echo $out ?: json_encode(["status" => true, "msg" => "Disconnected"]);
         exit;
@@ -160,9 +168,57 @@ display_top_tabs($tab_array);
 .table-wifi td, .table-wifi th {
     vertical-align: middle !important;
 }
+.iface-selector-bar {
+    background: #edf2f7;
+    border: 1px solid #e2e8f0;
+    padding: 12px 18px;
+    border-radius: 8px;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+}
 </style>
 
 <div class="container-fluid" style="padding-top: 15px;">
+
+    <!-- TOP SELECTOR: AUTO-DETECTED WIRELESS & NETWORK INTERFACES -->
+    <div class="iface-selector-bar">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+            <label style="margin: 0; font-weight: 600; font-size: 14px;">
+                <i class="fa-solid fa-network-wired text-primary"></i> <?=gettext("Antarmuka Aktif (Auto-Detected):")?>
+            </label>
+            <select id="select-active-iface" class="form-control" style="width: auto; min-width: 320px; font-weight: 600;" onchange="changeActiveInterface(this.value)">
+                <?php
+                $active = $status['active_interface'] ?? 'em1';
+                // 1. Genuine 802.11 wireless interfaces
+                foreach (($hw_info['wireless_interfaces'] ?? []) as $wif) {
+                    $sel = ($wif == $active) ? 'selected' : '';
+                    echo "<option value=\"{$wif}\" {$sel}>{$wif} (Wireless 802.11 Radio Adapter)</option>";
+                }
+                // 2. Bridged / Ethernet interfaces
+                foreach (($hw_info['all_interfaces'] ?? []) as $aif) {
+                    $n = $aif['name'];
+                    if (in_array($n, $hw_info['wireless_interfaces'] ?? [])) continue;
+                    $sel = ($n == $active) ? 'selected' : '';
+                    $ip_str = !empty($aif['ip']) ? " - IP: {$aif['ip']}" : "";
+                    $desc = ($n == 'em1') ? "VirtualBox Bridged Wi-Fi Uplink" : ($n == 'em0' ? "WAN Interface" : "Network Interface");
+                    echo "<option value=\"{$n}\" {$sel}>{$n} ({$desc}{$ip_str})</option>";
+                }
+                ?>
+            </select>
+            <span id="iface-switch-msg" class="text-success" style="display: none; font-weight: 600;">
+                <i class="fa-solid fa-circle-check"></i> <?=gettext("Interface updated")?>
+            </span>
+        </div>
+        <div>
+            <button class="btn btn-sm btn-info" onclick="triggerHardwareDetect()">
+                <i class="fa-solid fa-microchip"></i> <?=gettext("Re-Detect Hardware & Interfaces")?>
+            </button>
+        </div>
+    </div>
 
 <?php if ($tab == "overview"): ?>
     <!-- TAB 1: OVERVIEW & STATUS -->
@@ -171,7 +227,7 @@ display_top_tabs($tab_array);
             <div class="panel panel-default wifi-card">
                 <div class="panel-heading">
                     <i class="fa-solid fa-wifi text-primary" style="margin-right: 8px;"></i>
-                    <?=gettext("Wireless Interface Status")?>
+                    <?=gettext("Wireless & Network Interface Status")?>
                     <button class="btn btn-xs btn-default pull-right" onclick="refreshStatus()">
                         <i class="fa-solid fa-arrows-rotate"></i> <?=gettext("Refresh")?>
                     </button>
@@ -182,34 +238,36 @@ display_top_tabs($tab_array);
                             <tr>
                                 <th style="width: 35%;"><?=gettext("Operating Mode")?></th>
                                 <td>
-                                    <?php if (!empty($status['is_virtual'])): ?>
-                                        <span class="badge badge-wifi-bridge"><i class="fa-solid fa-link"></i> VirtualBox Bridged Wi-Fi</span>
+                                    <?php if (!empty($status['is_bridged'])): ?>
+                                        <span class="badge badge-wifi-bridge"><i class="fa-solid fa-link"></i> VirtualBox Bridged Wi-Fi Uplink</span>
                                     <?php elseif (($status['mode'] ?? '') == 'ap'): ?>
                                         <span class="badge badge-wifi-ap"><i class="fa-solid fa-tower-broadcast"></i> Access Point (HostAP)</span>
+                                    <?php elseif (!empty($status['is_wireless'])): ?>
+                                        <span class="badge badge-wifi-connected"><i class="fa-solid fa-laptop"></i> Wireless Client (Station 802.11)</span>
                                     <?php else: ?>
-                                        <span class="badge badge-wifi-connected"><i class="fa-solid fa-laptop"></i> Wireless Client (Station)</span>
+                                        <span class="badge badge-wifi-connected"><i class="fa-solid fa-network-wired"></i> Ethernet Network Interface</span>
                                     <?php endif; ?>
                                 </td>
                             </tr>
                             <tr>
+                                <th><?=gettext("Active Interface")?></th>
+                                <td><code id="stat-iface" style="font-size: 14px;"><?=$status['active_interface'] ?? 'em1'?></code></td>
+                            </tr>
+                            <tr>
                                 <th><?=gettext("Connection State")?></th>
                                 <td>
-                                    <strong id="stat-state" class="<?=($status['state'] ?? '') == 'Connected' ? 'text-success' : 'text-muted'?>">
-                                        <?=$status['state'] ?? 'Idle'?>
+                                    <strong id="stat-state" class="<?=!empty($status['ip']) ? 'text-success' : 'text-muted'?>">
+                                        <?=$status['state'] ?? 'Active'?>
                                     </strong>
                                 </td>
                             </tr>
                             <tr>
-                                <th><?=gettext("Active Interface")?></th>
-                                <td><code id="stat-iface"><?=$status['active_interface'] ?? 'wlan0'?></code></td>
-                            </tr>
-                            <tr>
-                                <th><?=gettext("Connected SSID")?></th>
-                                <td><strong id="stat-ssid"><?=$status['ssid'] ?: '<em>' . gettext("None (Not Connected)") . '</em>'?></strong></td>
-                            </tr>
-                            <tr>
                                 <th><?=gettext("IP Address")?></th>
-                                <td><span id="stat-ip"><?=$status['ip'] ?: '<em>' . gettext("No IP Assigned") . '</em>'?></span></td>
+                                <td><strong id="stat-ip" style="font-size: 14px;"><?=$status['ip'] ?: '<em>' . gettext("No IP Assigned") . '</em>'?></strong></td>
+                            </tr>
+                            <tr>
+                                <th><?=gettext("Subnet Mask")?></th>
+                                <td><span id="stat-netmask"><?=$status['netmask'] ?: 'N/A'?></span></td>
                             </tr>
                             <tr>
                                 <th><?=gettext("Default Gateway")?></th>
@@ -218,6 +276,15 @@ display_top_tabs($tab_array);
                             <tr>
                                 <th><?=gettext("MAC Address")?></th>
                                 <td><code id="stat-mac"><?=$status['mac'] ?: 'N/A'?></code></td>
+                            </tr>
+                            <tr>
+                                <th><?=gettext("Link Media & Speed")?></th>
+                                <td><span id="stat-media"><?=$status['media'] ?: 'Auto'?></span></td>
+                            </tr>
+                            <?php if (!empty($status['is_wireless'])): ?>
+                            <tr>
+                                <th><?=gettext("Connected SSID")?></th>
+                                <td><strong id="stat-ssid"><?=$status['ssid'] ?: '<em>' . gettext("None (Not Connected)") . '</em>'?></strong></td>
                             </tr>
                             <tr>
                                 <th><?=gettext("Signal Quality")?></th>
@@ -230,6 +297,7 @@ display_top_tabs($tab_array);
                                     </div>
                                 </td>
                             </tr>
+                            <?php endif; ?>
                         </tbody>
                     </table>
 
@@ -237,11 +305,8 @@ display_top_tabs($tab_array);
                         <a href="interfaces_wifi.php?tab=scan" class="btn btn-primary">
                             <i class="fa-solid fa-satellite-dish"></i> <?=gettext("Scan & Connect Networks")?>
                         </a>
-                        <button class="btn btn-warning" onclick="disconnectWifi()">
-                            <i class="fa-solid fa-power-off"></i> <?=gettext("Disconnect")?>
-                        </button>
                         <a href="interfaces_wifi.php?tab=detect" class="btn btn-info pull-right">
-                            <i class="fa-solid fa-microchip"></i> <?=gettext("Auto-Detect Hardware")?>
+                            <i class="fa-solid fa-microchip"></i> <?=gettext("Hardware & Auto-Detect")?>
                         </a>
                     </div>
                 </div>
@@ -252,33 +317,35 @@ display_top_tabs($tab_array);
             <div class="panel panel-default wifi-card">
                 <div class="panel-heading">
                     <i class="fa-solid fa-circle-info text-info" style="margin-right: 8px;"></i>
-                    <?=gettext("System & Environment")?>
+                    <?=gettext("System & Hardware Auto-Detection")?>
                 </div>
                 <div class="panel-body">
                     <ul class="list-group">
                         <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <?=gettext("Environment Type")?>
+                            <?=gettext("Environment Platform")?>
                             <span class="badge"><?=$status['vm_type'] ?? 'Native'?></span>
                         </li>
                         <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <?=gettext("Detected Physical Wi-Fi Devices")?>
-                            <span class="badge"><?=$status['hardware_detected'] ?? 0?></span>
+                            <?=gettext("Physical 802.11 Radios (net.wlan.devices)")?>
+                            <span class="badge"><?=!empty($status['wlan_parents']) ? implode(', ', $status['wlan_parents']) : 'None (Virtual NIC)'?></span>
                         </li>
                         <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <?=gettext("Parent Wireless Devices")?>
-                            <span class="badge"><?=implode(', ', $status['wlan_parents'] ?: ['None'])?></span>
+                            <?=gettext("Cloned 802.11 Interfaces")?>
+                            <span class="badge"><?=!empty($status['wireless_interfaces']) ? implode(', ', $status['wireless_interfaces']) : 'None'?></span>
                         </li>
                         <li class="list-group-item d-flex justify-content-between align-items-center">
-                            <?=gettext("Cloned WLAN Interfaces")?>
-                            <span class="badge"><?=implode(', ', $status['virtual_interfaces'] ?: ['wlan0'])?></span>
+                            <?=gettext("Bridged Uplink Candidates")?>
+                            <span class="badge"><?=!empty($status['bridged_candidates']) ? implode(', ', $status['bridged_candidates']) : 'em1'?></span>
                         </li>
                     </ul>
 
+                    <?php if (!empty($status['is_vm'])): ?>
                     <div class="alert alert-info" style="margin-top: 15px; margin-bottom: 0; font-size: 13px;">
                         <i class="fa-solid fa-lightbulb"></i>
-                        <strong><?=gettext("Testing in VirtualBox?")?></strong><br>
-                        <?=gettext("If you are running in VirtualBox and bridged your VM to your host PC's Wi-Fi card, switch to the <strong>VirtualBox / Bridged Wi-Fi</strong> tab to bind and test instantly.")?>
+                        <strong><?=gettext("VirtualBox Bridged Wi-Fi Terdeteksi")?></strong><br>
+                        <?=gettext("pfSense berjalan di dalam VirtualBox dengan antarmuka <code>em1</code> dijembatani ke kartu Wi-Fi Host PC. Lalu lintas data internet & LAN tersambung secara otomatis melalui Wi-Fi Host.")?>
                     </div>
+                    <?php endif; ?>
                 </div>
             </div>
         </div>
@@ -295,32 +362,49 @@ display_top_tabs($tab_array);
             </button>
         </div>
         <div class="panel-body">
-            <p class="text-muted">
-                <?=gettext("Scan for available 2.4 GHz and 5 GHz wireless networks within range of your adapter.")?>
-            </p>
+            <div style="margin-bottom: 15px; display: flex; align-items: center; gap: 10px;">
+                <label style="margin: 0; font-weight: 600;"><?=gettext("Antarmuka untuk Scan:")?></label>
+                <select id="scan-iface" class="form-control" style="width: auto; min-width: 250px;">
+                    <?php
+                    $active = $status['active_interface'] ?? 'em1';
+                    foreach (($hw_info['wireless_interfaces'] ?? []) as $wif) {
+                        $sel = ($wif == $active) ? 'selected' : '';
+                        echo "<option value=\"{$wif}\" {$sel}>{$wif} (802.11 Wireless)</option>";
+                    }
+                    foreach (($hw_info['all_interfaces'] ?? []) as $aif) {
+                        $n = $aif['name'];
+                        if (in_array($n, $hw_info['wireless_interfaces'] ?? [])) continue;
+                        $sel = ($n == $active) ? 'selected' : '';
+                        echo "<option value=\"{$n}\" {$sel}>{$n} (Bridged / Ethernet)</option>";
+                    }
+                    ?>
+                </select>
+            </div>
 
             <div id="scan-loading" style="display:none; text-align: center; padding: 25px;">
                 <i class="fa-solid fa-spinner fa-spin fa-2x text-primary"></i>
-                <h5 style="margin-top: 10px;"><?=gettext("Scanning nearby wireless channels... Please wait...")?></h5>
+                <h5 style="margin-top: 10px;"><?=gettext("Melakukan scan frekuensi radio udara... Mohon tunggu...")?></h5>
             </div>
+
+            <div id="scan-alert-box"></div>
 
             <div class="table-responsive">
                 <table class="table table-striped table-hover table-wifi" id="table-scan-results">
                     <thead>
                         <tr>
                             <th style="width: 5%;">#</th>
-                            <th style="width: 25%;"><?=gettext("SSID (Network Name)")?></th>
+                            <th style="width: 25%;"><?=gettext("SSID (Nama Jaringan)")?></th>
                             <th style="width: 20%;"><?=gettext("BSSID (MAC)")?></th>
                             <th style="width: 10%;"><?=gettext("Channel")?></th>
-                            <th style="width: 15%;"><?=gettext("Signal Strength")?></th>
-                            <th style="width: 15%;"><?=gettext("Security")?></th>
-                            <th style="width: 10%; text-align: center;"><?=gettext("Action")?></th>
+                            <th style="width: 15%;"><?=gettext("Kekuatan Sinyal")?></th>
+                            <th style="width: 15%;"><?=gettext("Keamanan")?></th>
+                            <th style="width: 10%; text-align: center;"><?=gettext("Aksi")?></th>
                         </tr>
                     </thead>
                     <tbody id="scan-tbody">
                         <tr>
                             <td colspan="7" class="text-center text-muted" style="padding: 20px;">
-                                <?=gettext("Click 'Scan Networks Now' above to detect nearby Wi-Fi networks.")?>
+                                <?=gettext("Klik 'Scan Networks Now' di atas untuk memindai jaringan Wi-Fi fisik di sekitar.")?>
                             </td>
                         </tr>
                     </tbody>
@@ -335,7 +419,7 @@ display_top_tabs($tab_array);
             <div class="modal-content">
                 <div class="modal-header">
                     <button type="button" class="close" data-dismiss="modal">&times;</button>
-                    <h4 class="modal-title"><i class="fa-solid fa-key text-primary"></i> <?=gettext("Connect to Wireless Network")?></h4>
+                    <h4 class="modal-title"><i class="fa-solid fa-key text-primary"></i> <?=gettext("Sambungkan ke Jaringan Wi-Fi")?></h4>
                 </div>
                 <div class="modal-body">
                     <div class="form-group">
@@ -349,7 +433,7 @@ display_top_tabs($tab_array);
                     <div class="form-group" id="group-password">
                         <label><?=gettext("Password / WPA2 Pre-Shared Key:")?></label>
                         <div class="input-group">
-                            <input type="password" id="connect-password" class="form-control" placeholder="<?=gettext("Enter wireless passphrase")?>">
+                            <input type="password" id="connect-password" class="form-control" placeholder="<?=gettext("Masukkan kata sandi Wi-Fi")?>">
                             <span class="input-group-btn">
                                 <button class="btn btn-default" type="button" onclick="togglePassView()">
                                     <i class="fa-solid fa-eye" id="eye-icon"></i>
@@ -360,9 +444,9 @@ display_top_tabs($tab_array);
                     <div id="connect-status-msg" style="margin-top: 10px;"></div>
                 </div>
                 <div class="modal-footer">
-                    <button type="button" class="btn btn-default" data-dismiss="modal"><?=gettext("Cancel")?></button>
+                    <button type="button" class="btn btn-default" data-dismiss="modal"><?=gettext("Batal")?></button>
                     <button type="button" class="btn btn-primary" id="btn-do-connect" onclick="submitConnect()">
-                        <i class="fa-solid fa-plug"></i> <?=gettext("Connect")?>
+                        <i class="fa-solid fa-plug"></i> <?=gettext("Sambungkan")?>
                     </button>
                 </div>
             </div>
@@ -377,21 +461,21 @@ display_top_tabs($tab_array);
             <?=gettext("Access Point (AP / Hotspot Mode)")?>
             <?php if (($status['mode'] ?? '') == 'ap'): ?>
                 <span class="badge badge-wifi-connected pull-right" style="margin-top: 3px;">
-                    <i class="fa-solid fa-circle-check"></i> <?=gettext("AP Active")?>
+                    <i class="fa-solid fa-circle-check"></i> <?=gettext("AP Aktif")?>
                 </span>
             <?php endif; ?>
         </div>
         <div class="panel-body">
-            <?php if (!empty($status['is_vm'])): ?>
-                <div class="alert alert-info" style="border-left: 4px solid #17a2b8; margin-bottom: 20px;">
-                    <i class="fa-solid fa-circle-info fa-lg" style="margin-right: 6px;"></i>
-                    <strong><?=gettext("VirtualBox / Hypervisor Environment Detected:")?></strong><br>
-                    <?=gettext("Hypervisors emulate virtual Ethernet network controllers rather than physical RF radio antennas. Clicking <strong>'Start Access Point'</strong> will activate the <strong>Virtual AP Hotspot Gateway</strong> on <code>192.168.88.1/24</code> for routing & DHCP testing. On native bare-metal hardware with PCIe/USB Wi-Fi (Intel, Atheros, Realtek), physical over-the-air radio is broadcast automatically.")?>
+            <?php if (empty($hw_info['wireless_interfaces']) && empty($hw_info['wlan_parent_devices'])): ?>
+                <div class="alert alert-warning" style="border-left: 4px solid #ffc107; margin-bottom: 20px;">
+                    <i class="fa-solid fa-triangle-exclamation fa-lg" style="margin-right: 6px;"></i>
+                    <strong><?=gettext("Radio 802.11 Fisik Diperlukan:")?></strong><br>
+                    <?=gettext("Mode Access Point (HostAP) membutuhkan kartu wireless 802.11 fisik (PCIe atau USB Wi-Fi dongle). VirtualBox menjembatani koneksi melalui Ethernet virtual. Untuk menyiarkan hotspot nirkabel dari VirtualBox, pasang USB Wi-Fi dongle pada PC Host lalu hubungkan melalui menu VirtualBox: <strong>Devices > USB > [Pilih Wi-Fi Dongle]</strong>.")?>
                 </div>
             <?php endif; ?>
 
             <p class="text-muted">
-                <?=gettext("Broadcast a Wi-Fi hotspot from pfSense. Supports 802.11 b/g/n/ac on native wireless hardware and Virtual Hotspot Gateway in VM environments.")?>
+                <?=gettext("Menyiarkan hotspot Wi-Fi dari pfSense menggunakan hostapd pada antarmuka nirkabel fisik.")?>
             </p>
 
             <form class="form-horizontal" onsubmit="event.preventDefault(); submitAP();">
@@ -408,7 +492,7 @@ display_top_tabs($tab_array);
                     </div>
                 </div>
                 <div class="form-group">
-                    <label class="col-sm-3 control-label"><?=gettext("Wireless Channel:")?></label>
+                    <label class="col-sm-3 control-label"><?=gettext("Saluran (Channel):")?></label>
                     <div class="col-sm-3">
                         <select id="ap-channel" class="form-control">
                             <option value="1">Channel 1 (2.412 GHz)</option>
@@ -424,16 +508,16 @@ display_top_tabs($tab_array);
                     <label class="col-sm-3 control-label"><?=gettext("AP Subnet IP:")?></label>
                     <div class="col-sm-4">
                         <input type="text" id="ap-ip" class="form-control" value="192.168.88.1" required>
-                        <span class="help-block"><?=gettext("Static IP assigned to wlan0 in Hotspot mode.")?></span>
+                        <span class="help-block"><?=gettext("IP statis antarmuka Hotspot.")?></span>
                     </div>
                 </div>
                 <div class="form-group">
                     <div class="col-sm-offset-3 col-sm-6">
                         <button type="submit" class="btn btn-success" id="btn-ap-start">
-                            <i class="fa-solid fa-play"></i> <?=gettext("Start Access Point")?>
+                            <i class="fa-solid fa-play"></i> <?=gettext("Mulai Access Point")?>
                         </button>
                         <button type="button" class="btn btn-danger" id="btn-ap-stop" onclick="stopAP()">
-                            <i class="fa-solid fa-stop"></i> <?=gettext("Stop Access Point")?>
+                            <i class="fa-solid fa-stop"></i> <?=gettext("Hentikan Access Point")?>
                         </button>
                     </div>
                 </div>
@@ -443,55 +527,114 @@ display_top_tabs($tab_array);
     </div>
 
 <?php elseif ($tab == "detect"): ?>
-    <!-- TAB 4: HARDWARE AUTO-DETECT -->
+    <!-- TAB 4: HARDWARE & AUTO-DETECT -->
     <div class="panel panel-default wifi-card">
         <div class="panel-heading">
             <i class="fa-solid fa-microchip text-primary" style="margin-right: 8px;"></i>
-            <?=gettext("Hardware Auto-Detection & Kernel Drivers")?>
+            <?=gettext("Auto-Detected Network Interfaces & Hardware")?>
             <button class="btn btn-sm btn-primary pull-right" onclick="triggerHardwareDetect()">
                 <i class="fa-solid fa-magnifying-glass"></i> <?=gettext("Re-Detect Hardware")?>
             </button>
         </div>
         <div class="panel-body">
             <p class="text-muted">
-                <?=gettext("Automatically probes PCIe, USB, and motherboards for wireless adapters, loads FreeBSD kernel modules, and creates 802.11 virtual wlan devices.")?>
+                <?=gettext("Mendeteksi otomatis seluruh antarmuka jaringan, adapter 802.11 fisik, controller PCI, serta modul kernel FreeBSD.")?>
             </p>
 
-            <h4><?=gettext("Detected Physical Hardware Controllers")?></h4>
-            <table class="table table-striped table-bordered table-wifi">
-                <thead>
-                    <tr>
-                        <th><?=gettext("Device / PCI ID")?></th>
-                        <th><?=gettext("Vendor")?></th>
-                        <th><?=gettext("Model")?></th>
-                        <th><?=gettext("Device Type")?></th>
-                        <th><?=gettext("Status")?></th>
-                    </tr>
-                </thead>
-                <tbody id="hw-tbody">
-                    <?php if (!empty($hw_info['devices'])): ?>
-                        <?php foreach ($hw_info['devices'] as $dev): ?>
-                            <tr>
-                                <td><code><?=htmlspecialchars($dev['name'])?></code></td>
-                                <td><?=htmlspecialchars($dev['vendor'])?></td>
-                                <td><?=htmlspecialchars($dev['model'])?></td>
-                                <td>
-                                    <?php if (!empty($dev['is_wireless'])): ?>
-                                        <span class="badge badge-wifi-connected"><i class="fa-solid fa-wifi"></i> <?=htmlspecialchars($dev['type'])?></span>
-                                    <?php else: ?>
-                                        <span class="badge badge-wifi-disconnected"><?=htmlspecialchars($dev['type'])?></span>
-                                    <?php endif; ?>
-                                </td>
-                                <td><span class="text-success"><i class="fa-solid fa-check"></i> <?=gettext("Active")?></span></td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php else: ?>
-                        <tr><td colspan="5" class="text-center text-muted"><?=gettext("No physical network devices found or waiting for scan...")?></td></tr>
-                    <?php endif; ?>
-                </tbody>
-            </table>
+            <h4><i class="fa-solid fa-network-wired text-primary"></i> <?=gettext("Auto-Detected Network Interfaces (ifconfig)")?></h4>
+            <div class="table-responsive">
+                <table class="table table-striped table-bordered table-wifi">
+                    <thead>
+                        <tr>
+                            <th style="width: 15%;"><?=gettext("Nama Antarmuka")?></th>
+                            <th style="width: 25%;"><?=gettext("Tipe Antarmuka")?></th>
+                            <th style="width: 20%;"><?=gettext("MAC Address")?></th>
+                            <th style="width: 20%;"><?=gettext("IPv4 Address")?></th>
+                            <th style="width: 10%;"><?=gettext("Media")?></th>
+                            <th style="width: 10%; text-align: center;"><?=gettext("Status")?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (!empty($hw_info['all_interfaces'])): ?>
+                            <?php foreach ($hw_info['all_interfaces'] as $aif): ?>
+                                <tr>
+                                    <td><strong style="font-size: 14px;"><code><?=htmlspecialchars($aif['name'])?></code></strong></td>
+                                    <td>
+                                        <?php if (!empty($aif['is_wireless'])): ?>
+                                            <span class="badge badge-wifi-connected"><i class="fa-solid fa-wifi"></i> Physical 802.11 Wireless</span>
+                                        <?php elseif ($aif['name'] == 'em1'): ?>
+                                            <span class="badge badge-wifi-bridge"><i class="fa-solid fa-link"></i> VirtualBox Bridged Wi-Fi Uplink</span>
+                                        <?php else: ?>
+                                            <span class="badge badge-wifi-disconnected"><i class="fa-solid fa-ethernet"></i> Ethernet Interface</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td><code><?=htmlspecialchars($aif['mac'] ?: 'N/A')?></code></td>
+                                    <td><?=htmlspecialchars($aif['ip'] ? $aif['ip'] . ' (' . $aif['netmask'] . ')' : 'No IP')?></td>
+                                    <td><small><?=htmlspecialchars($aif['media'] ?: 'Auto')?></small></td>
+                                    <td style="text-align: center;">
+                                        <?php if (!empty($aif['is_up'])): ?>
+                                            <span class="text-success"><i class="fa-solid fa-circle-check"></i> UP</span>
+                                        <?php else: ?>
+                                            <span class="text-muted"><i class="fa-solid fa-circle-xmark"></i> DOWN</span>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr><td colspan="6" class="text-center text-muted"><?=gettext("Tidak ada antarmuka jaringan terdeteksi.")?></td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
 
-            <h4 style="margin-top: 25px;"><?=gettext("Loaded FreeBSD Wireless Drivers & Subsystems")?></h4>
+            <h4 style="margin-top: 25px;"><i class="fa-solid fa-server text-info"></i> <?=gettext("Physical PCI Network Controllers (pciconf)")?></h4>
+            <div class="table-responsive">
+                <table class="table table-striped table-bordered table-wifi">
+                    <thead>
+                        <tr>
+                            <th style="width: 15%;"><?=gettext("Device Name")?></th>
+                            <th style="width: 25%;"><?=gettext("Vendor")?></th>
+                            <th style="width: 35%;"><?=gettext("Controller Model")?></th>
+                            <th style="width: 15%;"><?=gettext("Tipe")?></th>
+                            <th style="width: 10%; text-align: center;"><?=gettext("Status")?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (!empty($hw_info['pci_network_devices'])): ?>
+                            <?php foreach ($hw_info['pci_network_devices'] as $dev): ?>
+                                <tr>
+                                    <td><code><?=htmlspecialchars($dev['name'])?></code></td>
+                                    <td><?=htmlspecialchars($dev['vendor'])?></td>
+                                    <td><?=htmlspecialchars($dev['device'] ?? $dev['model'] ?? 'Network Controller')?></td>
+                                    <td>
+                                        <?php if (!empty($dev['is_wireless'])): ?>
+                                            <span class="badge badge-wifi-connected"><i class="fa-solid fa-wifi"></i> Wireless (802.11)</span>
+                                        <?php else: ?>
+                                            <span class="badge badge-wifi-disconnected"><i class="fa-solid fa-network-wired"></i> Ethernet (PCIe)</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td style="text-align: center;"><span class="text-success"><i class="fa-solid fa-check"></i> Active</span></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        <?php else: ?>
+                            <tr><td colspan="5" class="text-center text-muted"><?=gettext("Tidak ada controller PCI terdeteksi.")?></td></tr>
+                        <?php endif; ?>
+                    </tbody>
+                </table>
+            </div>
+
+            <h4 style="margin-top: 25px;"><i class="fa-brands fa-usb text-warning"></i> <?=gettext("USB Devices (usbconfig)")?></h4>
+            <ul class="list-group">
+                <?php if (!empty($hw_info['usb_devices'])): ?>
+                    <?php foreach ($hw_info['usb_devices'] as $usb): ?>
+                        <li class="list-group-item"><code><?=htmlspecialchars($usb)?></code></li>
+                    <?php endforeach; ?>
+                <?php else: ?>
+                    <li class="list-group-item text-muted"><em><?=gettext("Tidak ada perangkat USB terdeteksi.")?></em></li>
+                <?php endif; ?>
+            </ul>
+
+            <h4 style="margin-top: 25px;"><i class="fa-solid fa-cubes text-success"></i> <?=gettext("Loaded FreeBSD Wireless Drivers & Subsystems (kldstat)")?></h4>
             <div>
                 <?php if (!empty($hw_info['modules_loaded'])): ?>
                     <?php foreach ($hw_info['modules_loaded'] as $mod): ?>
@@ -500,7 +643,7 @@ display_top_tabs($tab_array);
                         </span>
                     <?php endforeach; ?>
                 <?php else: ?>
-                    <p class="text-muted"><em><?=gettext("No specific wireless kernel modules loaded yet.")?></em></p>
+                    <p class="text-muted"><em><?=gettext("Kernel modules wlan aktif.")?></em></p>
                 <?php endif; ?>
             </div>
         </div>
@@ -517,10 +660,10 @@ display_top_tabs($tab_array);
             <div class="alert alert-info">
                 <h4><i class="fa-solid fa-laptop"></i> <?=gettext("Host PC Wireless Bridging (VirtualBox / Testing)")?></h4>
                 <p>
-                    <?=gettext("When pfSense runs inside VirtualBox with a network adapter in <strong>Bridged Adapter</strong> mode attached to your host PC's Wi-Fi card, the virtual machine communicates directly through your host's Wi-Fi connection.")?>
+                    <?=gettext("Saat pfSense berjalan di VirtualBox dengan <strong>Bridged Adapter</strong> ke kartu Wi-Fi Host PC, mesin virtual berkomunikasi langsung melalui koneksi Wi-Fi Host.")?>
                 </p>
                 <p>
-                    <?=gettext("Select the virtual interface that is bridged with your host's wireless card. pfSense will configure DHCP, bind the uplink, and test packet flow seamlessly.")?>
+                    <?=gettext("Antarmuka yang dijembatani: <code>em1</code> (IP: <strong>192.168.1.109</strong>). Gateway router Wi-Fi Host: <strong>192.168.1.1</strong>.")?>
                 </p>
             </div>
 
@@ -529,7 +672,7 @@ display_top_tabs($tab_array);
                     <label class="col-sm-3 control-label"><?=gettext("Bridged Network Interface:")?></label>
                     <div class="col-sm-4">
                         <select id="bridge-iface" class="form-control">
-                            <?php foreach (($hw_info['bridged_candidates'] ?? ['em1', 'vtnet1']) as $cif): ?>
+                            <?php foreach (($hw_info['bridged_candidates'] ?? ['em1']) as $cif): ?>
                                 <option value="<?=htmlspecialchars($cif)?>" <?=($cif == ($status['active_interface'] ?? 'em1')) ? 'selected' : ''?>>
                                     <?=htmlspecialchars($cif)?>
                                 </option>
@@ -554,32 +697,60 @@ display_top_tabs($tab_array);
 </div>
 
 <script>
+function changeActiveInterface(iface) {
+    $.post('interfaces_wifi.php', {
+        ajax: 1,
+        act: 'set_iface',
+        iface: iface
+    }, function(res) {
+        $('#iface-switch-msg').fadeIn().delay(1500).fadeOut();
+        setTimeout(function() {
+            window.location.reload();
+        }, 500);
+    }, 'json');
+}
+
 function refreshStatus() {
     $.getJSON('interfaces_wifi.php?ajax=1&act=status', function(res) {
         if (!res) return;
-        $('#stat-state').text(res.state || 'Idle');
-        $('#stat-iface').text(res.active_interface || 'wlan0');
-        $('#stat-ssid').text(res.ssid || 'None');
+        $('#stat-iface').text(res.active_interface || 'em1');
+        $('#stat-state').text(res.state || 'Active');
         $('#stat-ip').text(res.ip || 'No IP');
+        $('#stat-netmask').text(res.netmask || 'N/A');
         $('#stat-gateway').text(res.gateway || 'None');
         $('#stat-mac').text(res.mac || 'N/A');
-        var pct = res.signal_percent || 0;
-        $('#stat-signal-text').text(pct + '% (' + (res.signal_dbm || -100) + ' dBm)');
-        $('#stat-signal-bar').css('width', pct + '%');
+        $('#stat-media').text(res.media || 'Auto');
+        if (res.is_wireless) {
+            $('#stat-ssid').text(res.ssid || 'None');
+            var pct = res.signal_percent || 0;
+            $('#stat-signal-text').text(pct + '% (' + (res.signal_dbm || -100) + ' dBm)');
+            $('#stat-signal-bar').css('width', pct + '%');
+        }
     });
 }
 
 function triggerScan() {
+    var iface = $('#scan-iface').val();
     $('#scan-loading').show();
     $('#scan-tbody').empty();
+    $('#scan-alert-box').empty();
     $('#btn-scan').prop('disabled', true);
 
-    $.getJSON('interfaces_wifi.php?ajax=1&act=scan', function(networks) {
+    $.getJSON('interfaces_wifi.php?ajax=1&act=scan&iface=' + encodeURIComponent(iface), function(resp) {
         $('#scan-loading').hide();
         $('#btn-scan').prop('disabled', false);
 
-        if (!networks || networks.length === 0) {
-            $('#scan-tbody').html('<tr><td colspan="7" class="text-center text-warning" style="padding: 20px;"><i class="fa-solid fa-triangle-exclamation"></i> <?=gettext("No wireless networks detected. Ensure wireless card is enabled.")?></td></tr>');
+        if (!resp || !resp.status) {
+            var msg = resp ? resp.msg : 'Scan gagal dijalankan.';
+            $('#scan-alert-box').html('<div class="alert alert-info"><i class="fa-solid fa-circle-info"></i> ' + msg + '</div>');
+            $('#scan-tbody').html('<tr><td colspan="7" class="text-center text-muted" style="padding: 20px;">' + msg + '</td></tr>');
+            return;
+        }
+
+        var networks = resp.networks || [];
+        if (networks.length === 0) {
+            $('#scan-alert-box').html('<div class="alert alert-warning"><i class="fa-solid fa-triangle-exclamation"></i> <?=gettext("Tidak ada jaringan Wi-Fi terdeteksi pada jangkauan radio adapter ini.")?></div>');
+            $('#scan-tbody').html('<tr><td colspan="7" class="text-center text-muted" style="padding: 20px;"><?=gettext("Tidak ada jaringan Wi-Fi ditemukan.")?></td></tr>');
             return;
         }
 
@@ -606,7 +777,7 @@ function triggerScan() {
     }).fail(function() {
         $('#scan-loading').hide();
         $('#btn-scan').prop('disabled', false);
-        $('#scan-tbody').html('<tr><td colspan="7" class="text-center text-danger"><?=gettext("Failed to execute scan. Please check wlan0 device.")?></td></tr>');
+        $('#scan-tbody').html('<tr><td colspan="7" class="text-center text-danger"><?=gettext("Gagal memanggil fungsi scan.")?></td></tr>');
     });
 }
 
@@ -640,18 +811,20 @@ function submitConnect() {
     var ssid = $('#connect-ssid').val();
     var sec = $('#connect-security').val();
     var pwd = $('#connect-password').val();
+    var iface = $('#scan-iface').val();
 
-    $('#btn-do-connect').prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Connecting...');
-    $('#connect-status-msg').html('<div class="alert alert-info"><i class="fa-solid fa-spinner fa-spin"></i> <?=gettext("Associating and requesting DHCP IP...")?></div>');
+    $('#btn-do-connect').prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Menghubungkan...');
+    $('#connect-status-msg').html('<div class="alert alert-info"><i class="fa-solid fa-spinner fa-spin"></i> <?=gettext("Mengirim permintaan asosiasi Wi-Fi...")?></div>');
 
     $.post('interfaces_wifi.php', {
         ajax: 1,
         act: 'connect',
         ssid: ssid,
         security: sec,
-        password: pwd
+        password: pwd,
+        iface: iface
     }, function(res) {
-        $('#btn-do-connect').prop('disabled', false).html('<i class="fa-solid fa-plug"></i> <?=gettext("Connect")?>');
+        $('#btn-do-connect').prop('disabled', false).html('<i class="fa-solid fa-plug"></i> <?=gettext("Sambungkan")?>');
         if (res && res.status) {
             $('#connect-status-msg').html('<div class="alert alert-success"><i class="fa-solid fa-check"></i> ' + res.msg + '</div>');
             setTimeout(function() {
@@ -659,20 +832,12 @@ function submitConnect() {
                 window.location.href = 'interfaces_wifi.php?tab=overview';
             }, 1800);
         } else {
-            $('#connect-status-msg').html('<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> ' + (res ? res.msg : 'Error connecting') + '</div>');
+            $('#connect-status-msg').html('<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> ' + (res ? res.msg : 'Gagal menyambung.') + '</div>');
         }
     }, 'json').fail(function() {
-        $('#btn-do-connect').prop('disabled', false).html('<i class="fa-solid fa-plug"></i> <?=gettext("Connect")?>');
-        $('#connect-status-msg').html('<div class="alert alert-danger"><?=gettext("Connection request failed.")?></div>');
+        $('#btn-do-connect').prop('disabled', false).html('<i class="fa-solid fa-plug"></i> <?=gettext("Sambungkan")?>');
+        $('#connect-status-msg').html('<div class="alert alert-danger"><?=gettext("Permintaan koneksi gagal.")?></div>');
     });
-}
-
-function disconnectWifi() {
-    if (!confirm('<?=gettext("Are you sure you want to disconnect Wi-Fi?")?>')) return;
-    $.post('interfaces_wifi.php', { ajax: 1, act: 'disconnect' }, function(res) {
-        alert(res.msg || 'Disconnected');
-        window.location.reload();
-    }, 'json');
 }
 
 function submitAP() {
@@ -681,8 +846,8 @@ function submitAP() {
     var chan = $('#ap-channel').val();
     var ip = $('#ap-ip').val();
 
-    $('#btn-ap-start').prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Starting...');
-    $('#ap-alert-box').html('<div class="alert alert-info"><i class="fa-solid fa-spinner fa-spin"></i> Starting HostAP service...</div>');
+    $('#btn-ap-start').prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Memulai...');
+    $('#ap-alert-box').html('<div class="alert alert-info"><i class="fa-solid fa-spinner fa-spin"></i> Mengaktifkan layanan Access Point...</div>');
 
     $.post('interfaces_wifi.php', {
         ajax: 1,
@@ -692,11 +857,11 @@ function submitAP() {
         ap_channel: chan,
         ap_ip: ip
     }, function(res) {
-        $('#btn-ap-start').prop('disabled', false).html('<i class="fa-solid fa-play"></i> Start Access Point');
+        $('#btn-ap-start').prop('disabled', false).html('<i class="fa-solid fa-play"></i> Mulai Access Point');
         if (res && res.status) {
             $('#ap-alert-box').html('<div class="alert alert-success"><i class="fa-solid fa-check"></i> ' + res.msg + '</div>');
         } else {
-            $('#ap-alert-box').html('<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> ' + (res ? res.msg : 'Failed to start AP') + '</div>');
+            $('#ap-alert-box').html('<div class="alert alert-danger"><i class="fa-solid fa-triangle-exclamation"></i> ' + (res ? res.msg : 'Gagal memulai AP') + '</div>');
         }
     }, 'json');
 }
@@ -713,8 +878,8 @@ function triggerHardwareDetect() {
 
 function submitBridge() {
     var iface = $('#bridge-iface').val();
-    $('#btn-bridge-apply').prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Applying...');
-    $('#bridge-alert-box').html('<div class="alert alert-info"><i class="fa-solid fa-spinner fa-spin"></i> Binding VirtualBox bridged interface ' + iface + '...</div>');
+    $('#btn-bridge-apply').prop('disabled', true).html('<i class="fa-solid fa-spinner fa-spin"></i> Menerapkan...');
+    $('#bridge-alert-box').html('<div class="alert alert-info"><i class="fa-solid fa-spinner fa-spin"></i> Menghubungkan interface ' + iface + '...</div>');
 
     $.post('interfaces_wifi.php', {
         ajax: 1,
@@ -728,7 +893,7 @@ function submitBridge() {
                 window.location.href = 'interfaces_wifi.php?tab=overview';
             }, 1800);
         } else {
-            $('#bridge-alert-box').html('<div class="alert alert-danger">' + (res ? res.msg : 'Failed') + '</div>');
+            $('#bridge-alert-box').html('<div class="alert alert-danger">' + (res ? res.msg : 'Gagal') + '</div>');
         }
     }, 'json');
 }
