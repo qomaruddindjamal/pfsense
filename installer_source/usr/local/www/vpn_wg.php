@@ -8,8 +8,8 @@
 require_once("guiconfig.inc");
 require_once("service-utils.inc");
 
-$pgtitle = array(gettext("VPN"), gettext("WireGuard"));
-$pglinks = array("", "@self");
+$pgtitle = array(gettext("WireGuard"));
+$pglinks = array("@self");
 
 $conf_file = "/usr/local/etc/wireguard/wg0.conf";
 $savemsg = "";

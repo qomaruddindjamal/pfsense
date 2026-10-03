@@ -7,7 +7,7 @@
 	<title>VPN: WireGuard</title>
 	<menu>
 		<name>WireGuard</name>
-		<section>VPN</section>
+		<section>WireGuard</section>
 		<url>/vpn_wg.php</url>
 		<tooltiptext>Manage WireGuard VPN Tunnels and Peers</tooltiptext>
 	</menu>

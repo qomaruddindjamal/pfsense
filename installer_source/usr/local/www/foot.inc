@@ -204,6 +204,12 @@
 				return;
 			}
 
+			if (currentScript === 'vpn_wg.php') {
+				$('.sidebar-item').removeClass('active');
+				$('.sidebar-link.direct-link[href="/vpn_wg.php"]').closest('.sidebar-item').addClass('active');
+				return;
+			}
+
 			$('.sidebar-submenu a').each(function() {
 				var href = $(this).attr('href');
 				if (href && !href.startsWith('http://') && !href.startsWith('https://')) {

@@ -356,6 +356,10 @@ $vpn_menu[] = array(gettext("OpenVPN"), "/vpn_openvpn_server.php");
 //$vpn_menu[] = array(gettext("PPTP"), "/vpn_pptp.php");
 $vpn_menu[] = array(gettext("L2TP"), "/vpn_l2tp.php");
 $vpn_menu = msort(array_merge($vpn_menu, return_ext_menu("VPN")), 0);
+// Pastikan WireGuard tidak muncul di sub-menu VPN
+$vpn_menu = array_filter($vpn_menu, function($item) {
+	return ($item[1] ?? '') !== '/vpn_wg.php';
+});
 
 // Status
 $status_menu = array();
@@ -547,6 +551,7 @@ if (are_notices_pending()) {
 		$categories = [
 			['id' => 'system',      'name' => 'System',      'icon' => 'fa-solid fa-gears',          'menu' => $system_menu,      'href' => null],
 			['id' => 'interfaces',  'name' => 'Interfaces',  'icon' => 'fa-solid fa-network-wired',  'menu' => $interfaces_menu,  'href' => null],
+			['id' => 'wireguard',   'name' => 'WireGuard',   'icon' => 'fa-solid fa-shield',         'url' => '/vpn_wg.php'],
 			['id' => 'firewall',    'name' => 'Firewall',    'icon' => 'fa-solid fa-shield-halved',  'menu' => $firewall_menu,    'href' => null],
 			['id' => 'services',    'name' => 'Services',    'icon' => 'fa-solid fa-cubes',          'menu' => $services_menu,    'href' => null],
 			['id' => 'vpn',         'name' => 'VPN',         'icon' => 'fa-solid fa-key',            'menu' => $vpn_menu,         'href' => null],
@@ -576,6 +581,10 @@ if (are_notices_pending()) {
 			} elseif ($current_page == 'services_virtual.php') {
 				// Halaman KVM khusus mengaktifkan menu tunggal KVM
 				$is_active = ($cat['id'] == 'kvm');
+				$menu_output = $has_sub ? output_menu($cat['menu'], $cat['href'], $cat['name']) : "";
+			} elseif ($current_page == 'vpn_wg.php') {
+				// Halaman WireGuard khusus mengaktifkan menu tunggal WireGuard
+				$is_active = ($cat['id'] == 'wireguard');
 				$menu_output = $has_sub ? output_menu($cat['menu'], $cat['href'], $cat['name']) : "";
 			} elseif ($has_sub) {
 				$menu_output = output_menu($cat['menu'], $cat['href'], $cat['name']);
