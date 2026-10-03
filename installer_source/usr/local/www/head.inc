@@ -551,9 +551,9 @@ if (are_notices_pending()) {
 			['id' => 'services',    'name' => 'Services',    'icon' => 'fa-solid fa-cubes',          'menu' => $services_menu,    'href' => null],
 			['id' => 'vpn',         'name' => 'VPN',         'icon' => 'fa-solid fa-key',            'menu' => $vpn_menu,         'href' => null],
 			['id' => 'kvm',         'name' => 'KVM',         'icon' => 'fa-solid fa-server',         'url' => '/services_virtual.php'],
-			['id' => 'status',      'name' => 'Status',      'icon' => 'fa-solid fa-chart-line',     'menu' => $status_menu,      'href' => null],
 			['id' => 'diagnostics', 'name' => 'Diagnostics', 'icon' => 'fa-solid fa-toolbox',        'menu' => $diagnostics_menu, 'href' => null],
 			['id' => 'terminal',    'name' => 'Terminal',    'icon' => 'fa-solid fa-terminal',       'url' => '/diag_terminal.php'],
+			['id' => 'status',      'name' => 'Status',      'icon' => 'fa-solid fa-chart-line',     'menu' => $status_menu,      'href' => null],
 			['id' => 'help',        'name' => $help_menu_title, 'icon' => 'fa-solid fa-circle-question','menu' => $help_menu,    'href' => '_blank']
 		];
 
