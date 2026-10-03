@@ -36,3 +36,6 @@ scratch/
 
 # Base archive (> 100MB)
 installer_source/usr/local/share/pfSense/base.txz
+
+# Large package source archives
+packages/aapanel/bundle/

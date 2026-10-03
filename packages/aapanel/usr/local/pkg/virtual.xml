@@ -3,18 +3,18 @@
 <?xml-stylesheet type="text/xsl" href="../xsl/package.xsl"?>
 <packagegui>
 	<name>virtual</name>
-	<version>1.0.0</version>
-	<title>Services: Virtual Machines</title>
+	<version>1.1.0</version>
+	<title>KVM: Virtual Machines</title>
 	<menu>
 		<name>Virtual Machines</name>
-		<section>Services</section>
+		<section>KVM</section>
 		<url>/services_virtual.php</url>
-		<tooltiptext>Virtual Machine and aaPanel Manager</tooltiptext>
+		<tooltiptext>Virtual Machine (KVM/Bhyve) and aaPanel Manager</tooltiptext>
 	</menu>
 	<service>
-		<name>virtual</name>
-		<rcfile>virtual</rcfile>
-		<executable>aapanel-pfsense</executable>
-		<description><![CDATA[Virtual Machine and aaPanel Service]]></description>
+		<name>kvm</name>
+		<rcfile>kvm</rcfile>
+		<executable>kvm-manager</executable>
+		<description><![CDATA[KVM / Bhyve Hypervisor & Virtual Machine Manager]]></description>
 	</service>
 </packagegui>

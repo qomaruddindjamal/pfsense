@@ -280,31 +280,45 @@ echo "[✓] Xray-core multi-protokol terpasang! Kelola dengan 'xray-control star
     safe_rmtree(staging)
 
 def build_kvm():
-    print("=== Membangun kvm.pkg (aaPanel KVM Engine) ===")
+    print("=== Membangun kvm.pkg (aaPanel KVM Engine & WebGUI) ===")
     staging = BASE_DIR / "staging_aapanel"
     if staging.exists():
         safe_rmtree(staging)
     staging.mkdir(parents=True)
 
     (staging / "usr/local/bin").mkdir(parents=True)
-    (staging / "usr/local/etc/aapanel").mkdir(parents=True)
+    (staging / "usr/local/etc/kvm").mkdir(parents=True)
+    (staging / "usr/local/etc/rc.d").mkdir(parents=True)
+    (staging / "usr/local/pkg").mkdir(parents=True)
+    (staging / "usr/local/www").mkdir(parents=True)
     (staging / "usr/local/share/aapanel").mkdir(parents=True)
+
+    # WebGUI Menu & Pages
+    shutil.copy2(PACKAGES_DIR / "aapanel/usr/local/pkg/virtual.xml", staging / "usr/local/pkg/virtual.xml")
+    shutil.copy2(PACKAGES_DIR / "aapanel/usr/local/www/services_virtual.php", staging / "usr/local/www/services_virtual.php")
+
+    # KVM Manager & Services
+    shutil.copy2(PACKAGES_DIR / "aapanel/usr/local/bin/kvm-manager", staging / "usr/local/bin/kvm-manager")
+    shutil.copy2(PACKAGES_DIR / "aapanel/usr/local/etc/rc.d/kvm", staging / "usr/local/etc/rc.d/kvm")
 
     # CLI command aapanel-pfsense
     cli_sh = """#!/bin/sh
 # aaPanel Integration & Bhyve Manager for pfSense
-echo "=================================================================="
-echo "      aaPanel Management Utility for pfSense (FreeBSD)           "
-echo "=================================================================="
-
 case "$1" in
-  setup-bhyve)
-    echo "[*] Mengaktifkan hypervisor bhyve di kernel pfSense..."
-    kldload vmm >/dev/null 2>&1 || true
-    kldload nmdm >/dev/null 2>&1 || true
-    kldload if_tap >/dev/null 2>&1 || true
-    kldload if_bridge >/dev/null 2>&1 || true
-    echo "[✓] Modul vmm, nmdm, if_tap, if_bridge telah aktif."
+  setup-bhyve|setup)
+    /usr/local/bin/kvm-manager setup
+    ;;
+  start)
+    /usr/local/bin/kvm-manager start aapanel
+    ;;
+  stop)
+    /usr/local/bin/kvm-manager stop aapanel
+    ;;
+  restart)
+    /usr/local/bin/kvm-manager restart aapanel
+    ;;
+  status)
+    /usr/local/bin/kvm-manager status aapanel
     ;;
   install-linux)
     echo "[*] Menjalankan installer resmi aaPanel di sistem Linux..."
@@ -316,12 +330,8 @@ case "$1" in
     fi
     bash install_7.0_en.sh aapanel
     ;;
-  status)
-    echo "[*] Status modul virtualisasi bhyve:"
-    kldstat | grep -E "vmm|nmdm|if_tap|if_bridge" || echo "Modul bhyve belum dimuat."
-    ;;
   *)
-    echo "Penggunaan: aapanel-pfsense {setup-bhyve|install-linux|status}"
+    echo "Penggunaan: aapanel-pfsense {setup|start|stop|restart|status|install-linux}"
     exit 1
     ;;
 esac
@@ -336,31 +346,45 @@ esac
             if bfile.is_file():
                 shutil.copy2(bfile, staging / "usr/local/share/aapanel" / bfile.name)
 
-    # Config file
-    conf = """# Konfigurasi aaPanel pfSense Integration
-BHYVE_VM_NAME="aapanel-vm"
-BHYVE_VM_RAM="2048M"
-BHYVE_VM_CPUS="2"
-BHYVE_DISK_SIZE="20G"
+    # Inisialisasi default vms.json
+    conf_vms = """{
+  "aapanel": {
+    "id": "aapanel",
+    "name": "aaPanel",
+    "description": "aaPanel Linux Control Panel Environment (Default Built-in VM)",
+    "is_default": true,
+    "locked": true,
+    "os": "linux",
+    "cpus": 2,
+    "ram": 2048,
+    "disk_size": 20,
+    "disk_path": "/usr/local/vm/aapanel/disk.raw",
+    "vnet": "tap0",
+    "bridge_mode": true,
+    "bridge_interface": "bridge0",
+    "parent_interface": "vtnet0",
+    "autostart": true,
+    "port": 8888,
+    "created_at": "2026-10-01"
+  }
+}
 """
-    with open(staging / "usr/local/etc/aapanel/aapanel.conf", "w", newline="\n", encoding="utf-8") as f:
-        f.write(conf)
+    with open(staging / "usr/local/etc/kvm/vms.json", "w", newline="\n", encoding="utf-8") as f:
+        f.write(conf_vms)
 
     post_install = """#!/bin/sh
-chmod 755 /usr/local/bin/aapanel-pfsense
-kldload vmm >/dev/null 2>&1 || true
-for mod in vmm nmdm if_tap if_bridge; do
-    if [ -f /boot/loader.conf ] && ! grep -q "${mod}_load=\\"YES\\"" /boot/loader.conf; then
-        echo "${mod}_load=\\"YES\\"" >> /boot/loader.conf
-    fi
-done
-echo "[✓] aaPanel integration package terpasang! Ketik 'aapanel-pfsense' untuk opsi perintah."
+chmod 755 /usr/local/bin/kvm-manager /usr/local/bin/aapanel-pfsense /usr/local/etc/rc.d/kvm
+/usr/local/bin/kvm-manager setup >/dev/null 2>&1 || true
+if ! grep -q 'kvm_enable="YES"' /etc/rc.conf.local 2>/dev/null; then
+    echo 'kvm_enable="YES"' >> /etc/rc.conf.local
+fi
+echo "[✓] KVM & aaPanel default Virtual Machine package terpasang! Kelola di WebGUI: Services > Virtual Machines (KVM)"
 """
     create_pkg(
         pkg_name="kvm",
-        version="1.0.0",
-        comment="KVM & Virtual Engine Manager with aaPanel for pfSense",
-        desc="Paket virtualisasi KVM/bhyve dan container Linux lengkap dengan aaPanel di dalamnya untuk pfSense.",
+        version="1.1.0",
+        comment="KVM / Bhyve Hypervisor & aaPanel Default Virtual Machine for pfSense",
+        desc="Paket virtualisasi KVM/bhyve dan container Linux lengkap dengan aaPanel bawaan default untuk pfSense.",
         root_staging_dir=staging,
         post_install_script=post_install
     )

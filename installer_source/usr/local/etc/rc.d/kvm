@@ -1,0 +1,51 @@
+#!/bin/sh
+#
+# PROVIDE: kvm
+# REQUIRE: NETWORKING
+# KEYWORD: shutdown
+#
+
+. /etc/rc.subr
+
+name="kvm"
+rcvar="kvm_enable"
+
+load_rc_config $name
+
+: ${kvm_enable:="YES"}
+
+start_cmd="kvm_start"
+stop_cmd="kvm_stop"
+restart_cmd="kvm_restart"
+status_cmd="kvm_status"
+
+kvm_start() {
+    echo "Starting KVM/Bhyve Virtual Machine Manager..."
+    /usr/local/bin/kvm-manager setup
+    /usr/local/bin/kvm-manager autostart
+}
+
+kvm_stop() {
+    echo "Stopping all KVM/Bhyve Virtual Machines..."
+    # Hentikan semua VM
+    if [ -d /var/run/kvm ]; then
+        for pidf in /var/run/kvm/*.pid; do
+            if [ -f "$pidf" ]; then
+                vm_id=$(basename "$pidf" .pid)
+                /usr/local/bin/kvm-manager stop "$vm_id"
+            fi
+        done
+    fi
+}
+
+kvm_restart() {
+    kvm_stop
+    sleep 1
+    kvm_start
+}
+
+kvm_status() {
+    /usr/local/bin/kvm-manager status
+}
+
+run_rc_command "$1"
