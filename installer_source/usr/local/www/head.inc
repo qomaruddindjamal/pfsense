@@ -558,19 +558,35 @@ if (are_notices_pending()) {
 			['id' => 'help',        'name' => $help_menu_title, 'icon' => 'fa-solid fa-circle-question','menu' => $help_menu,    'href' => '_blank']
 		];
 
-		$current_page = basename($_SERVER['SCRIPT_NAME'] ?? '');
+		$current_page = basename(parse_url($_SERVER['SCRIPT_NAME'] ?? '', PHP_URL_PATH) ?? '');
+		$is_home = empty($current_page) || $current_page == 'index.php';
+
 		foreach ($categories as $cat):
 			if ($cat['name'] == 'Help' && g_get('disablehelpmenu')) {
 				continue;
 			}
 			$has_sub = empty($cat['url']);
-			if ($has_sub) {
+			if ($is_home || $cat['id'] == 'help') {
+				// Pada index/home atau Help (link eksternal/dokumentasi), tidak boleh ada menu yang aktif
+				$is_active = false;
+				$menu_output = $has_sub ? output_menu($cat['menu'], $cat['href'], $cat['name']) : "";
+			} elseif ($current_page == 'diag_terminal.php') {
+				// Halaman Terminal khusus mengaktifkan menu tunggal Terminal
+				$is_active = ($cat['id'] == 'terminal');
+				$menu_output = $has_sub ? output_menu($cat['menu'], $cat['href'], $cat['name']) : "";
+			} elseif ($current_page == 'services_virtual.php') {
+				// Halaman KVM khusus mengaktifkan menu tunggal KVM
+				$is_active = ($cat['id'] == 'kvm');
+				$menu_output = $has_sub ? output_menu($cat['menu'], $cat['href'], $cat['name']) : "";
+			} elseif ($has_sub) {
 				$menu_output = output_menu($cat['menu'], $cat['href'], $cat['name']);
 				if (strlen($menu_output) == 0) continue;
-				$is_active = (strpos($menu_output, $current_page) !== false);
+				// Pencocokan persis pada nama file target di href lokal
+				$is_active = (preg_match('/href=["\'][^"\'?#]*?\/' . preg_quote($current_page, '/') . '(["\'?#]|$)/i', $menu_output) === 1);
 			} else {
 				$menu_output = "";
-				$is_active = ($current_page == basename($cat['url']));
+				$cat_target = basename(parse_url($cat['url'] ?? '', PHP_URL_PATH) ?? '');
+				$is_active = (!empty($cat_target) && $current_page == $cat_target);
 			}
 	?>
 		<li class="sidebar-item <?=$is_active ? 'active' : ''?>">

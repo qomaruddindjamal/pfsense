@@ -181,25 +181,52 @@
 			});
 
 			// Highlight active link and parent category
-			var currentScript = window.location.pathname.split('/').pop();
-			if (!currentScript || currentScript === '') currentScript = 'index.php';
+			var currentScript = window.location.pathname.split('/').pop().split('?')[0];
+			if (!currentScript || currentScript === '' || currentScript === 'index.php') {
+				// Pada index/home, semua menu sidebar tidak boleh aktif sebelum diklik/dipilih
+				$('.sidebar-item').removeClass('active');
+				$('.sidebar-submenu li').removeClass('active');
+				return;
+			}
+
+			// Pastikan help tidak pernah di-highlight sebagai menu halaman aktif
+			$('#sub-help').closest('.sidebar-item').removeClass('active');
+
+			if (currentScript === 'diag_terminal.php') {
+				$('.sidebar-item').removeClass('active');
+				$('a[href="/diag_terminal.php"]').closest('.sidebar-item').addClass('active');
+				return;
+			}
+
+			if (currentScript === 'services_virtual.php') {
+				$('.sidebar-item').removeClass('active');
+				$('a[href="/services_virtual.php"]').closest('.sidebar-item').addClass('active');
+				return;
+			}
+
 			$('.sidebar-submenu a').each(function() {
 				var href = $(this).attr('href');
-				if (href && (href.indexOf(currentScript) !== -1)) {
-					$(this).parent().addClass('active');
-					var $parentItem = $(this).closest('.sidebar-item');
-					$parentItem.addClass('active');
-					if (!isDesktop()) {
-						$parentItem.addClass('open');
-						$parentItem.find('.sidebar-flyout').show();
+				if (href && !href.startsWith('http://') && !href.startsWith('https://')) {
+					var hrefScript = href.split('?')[0].split('/').pop();
+					if (hrefScript && hrefScript === currentScript) {
+						$(this).parent().addClass('active');
+						var $parentItem = $(this).closest('.sidebar-item');
+						$parentItem.addClass('active');
+						if (!isDesktop()) {
+							$parentItem.addClass('open');
+							$parentItem.find('.sidebar-flyout').show();
+						}
 					}
 				}
 			});
 
 			$('.sidebar-link.direct-link').each(function() {
 				var href = $(this).attr('href');
-				if (href && (href.indexOf(currentScript) !== -1)) {
-					$(this).closest('.sidebar-item').addClass('active');
+				if (href) {
+					var hrefScript = href.split('?')[0].split('/').pop();
+					if (hrefScript && hrefScript === currentScript) {
+						$(this).closest('.sidebar-item').addClass('active');
+					}
 				}
 			});
 		});
