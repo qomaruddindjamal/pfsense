@@ -410,7 +410,7 @@ status_vm() {
 }
 
 # ------------------------------------------------------------------------------
-# Hapus Virtual Machine (Blokir penghapusan aaPanel)
+# Hapus Virtual Machine & Seluruh Virtual Disk (Blokir penghapusan aaPanel)
 # ------------------------------------------------------------------------------
 delete_vm() {
     VM_ID="$1"
@@ -419,9 +419,69 @@ delete_vm() {
         exit 1
     fi
 
+    echo "[*] Menghentikan VM '${VM_ID}' jika sedang aktif..."
     stop_vm "${VM_ID}" 2>/dev/null || true
 
-    # Hapus dari vms.json
+    # Dapatkan path disk virtual dan media ISO sebelum konfigurasi dihapus
+    DISK_PATH=$(php -r '
+        $id = $argv[1];
+        $f = "/usr/local/etc/kvm/vms.json";
+        if (file_exists($f)) {
+            $data = json_decode(file_get_contents($f), true);
+            echo $data[$id]["disk_path"] ?? "";
+        }
+    ' "${VM_ID}" 2>/dev/null || true)
+
+    ISO_PATH=$(php -r '
+        $id = $argv[1];
+        $f = "/usr/local/etc/kvm/vms.json";
+        if (file_exists($f)) {
+            $data = json_decode(file_get_contents($f), true);
+            echo $data[$id]["iso_path"] ?? "";
+        }
+    ' "${VM_ID}" 2>/dev/null || true)
+
+    # 1. Hapus berkas virtual disk
+    if [ -n "${DISK_PATH}" ] && [ -f "${DISK_PATH}" ]; then
+        echo "[*] Menghapus berkas virtual disk: ${DISK_PATH}..."
+        rm -f "${DISK_PATH}"
+    fi
+
+    # 2. Hapus direktori VM jika ada
+    VM_DIR="${VM_BASE_DIR}/${VM_ID}"
+    if [ -d "${VM_DIR}" ]; then
+        echo "[*] Menghapus direktori data VM: ${VM_DIR}..."
+        rm -rf "${VM_DIR}"
+    fi
+
+    # 3. Hapus media installer ISO/IMG jika ada dan tidak dipakai VM lain
+    if [ -n "${ISO_PATH}" ] && [ -f "${ISO_PATH}" ]; then
+        USED_BY_OTHER=$(php -r '
+            $id = $argv[1];
+            $iso = $argv[2];
+            $f = "/usr/local/etc/kvm/vms.json";
+            if (file_exists($f)) {
+                $data = json_decode(file_get_contents($f), true);
+                foreach ($data as $k => $v) {
+                    if ($k !== $id && !empty($v["iso_path"]) && $v["iso_path"] === $iso) {
+                        echo "yes";
+                        exit(0);
+                    }
+                }
+            }
+            echo "no";
+        ' "${VM_ID}" "${ISO_PATH}" 2>/dev/null || true)
+
+        if [ "${USED_BY_OTHER}" != "yes" ]; then
+            echo "[*] Menghapus media installer ISO (${ISO_PATH}) agar tidak memenuhi penyimpanan..."
+            rm -f "${ISO_PATH}"
+        fi
+    fi
+
+    # 4. Hapus berkas supervisor, PID, dan log
+    rm -f "${RUN_DIR}/${VM_ID}.pid" "${LOG_DIR}/${VM_ID}.log" "${RUN_DIR}/supervisor_${VM_ID}.sh"
+
+    # 5. Hapus dari vms.json
     php -r '
         $id = $argv[1];
         $f = "/usr/local/etc/kvm/vms.json";
@@ -434,10 +494,73 @@ delete_vm() {
                 }
                 unset($data[$id]);
                 file_put_contents($f, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
-                echo "[✓] VM {$id} berhasil dihapus dari konfigurasi.\n";
+                echo "[✓] VM {$id} dan seluruh virtual disk berhasil dibersihkan dari pfSense.\n";
             }
         }
     ' "${VM_ID}"
+}
+
+# ------------------------------------------------------------------------------
+# Lepas Media Installer & Hapus Berkas ISO dari Disk (Clean Garbage)
+# ------------------------------------------------------------------------------
+eject_iso() {
+    VM_ID="$1"
+    if [ -z "${VM_ID}" ]; then
+        echo "Error: Masukkan ID Virtual Machine!"
+        exit 1
+    fi
+    php -r '
+        $id = $argv[1];
+        $f = "/usr/local/etc/kvm/vms.json";
+        if (file_exists($f)) {
+            $data = json_decode(file_get_contents($f), true);
+            if (isset($data[$id])) {
+                $iso = $data[$id]["iso_path"] ?? "";
+                $data[$id]["iso_path"] = "";
+                $data[$id]["install_mode"] = "disk";
+                file_put_contents($f, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+                if (!empty($iso) && file_exists($iso)) {
+                    // Cek apakah dipakai VM lain
+                    $used = false;
+                    foreach ($data as $k => $v) {
+                        if ($k !== $id && !empty($v["iso_path"]) && $v["iso_path"] === $iso) {
+                            $used = true;
+                            break;
+                        }
+                    }
+                    if (!$used) {
+                        @unlink($iso);
+                        echo "[✓] Media installer ({$iso}) berhasil dilepas dan berkas fisik dihapus agar hemat ruang disk.\n";
+                        exit(0);
+                    }
+                }
+                echo "[✓] Media installer berhasil dilepas dari VM {$id}.\n";
+            }
+        }
+    ' "${VM_ID}"
+}
+
+# ------------------------------------------------------------------------------
+# Bersihkan Seluruh Sampah Image ISO Installer
+# ------------------------------------------------------------------------------
+purge_images() {
+    echo "[*] Membersihkan seluruh berkas installer ISO/IMG di ${IMAGES_DIR}..."
+    rm -rf "${IMAGES_DIR}"/*
+    php -r '
+        $f = "/usr/local/etc/kvm/vms.json";
+        if (file_exists($f)) {
+            $data = json_decode(file_get_contents($f), true);
+            foreach ($data as $k => &$v) {
+                if (!empty($v["iso_path"])) {
+                    $v["iso_path"] = "";
+                    $v["install_mode"] = "disk";
+                }
+            }
+            file_put_contents($f, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+        }
+    '
+    echo "[✓] Seluruh sampah berkas ISO installer berhasil dibersihkan dari penyimpanan."
 }
 
 # ------------------------------------------------------------------------------
@@ -480,6 +603,12 @@ case "$1" in
     delete)
         delete_vm "$2"
         ;;
+    eject-iso|eject|detach-iso)
+        eject_iso "$2"
+        ;;
+    purge-images|purge)
+        purge_images
+        ;;
     download-image|download)
         download_image "$2" "$3"
         ;;
@@ -496,7 +625,7 @@ case "$1" in
         init_config
         ;;
     *)
-        echo "Penggunaan: kvm-manager {setup|start <id>|stop <id>|restart <id>|status [id]|delete <id>|download-image <file> <url>|list-images|delete-image <file>|autostart}"
+        echo "Penggunaan: kvm-manager {setup|start <id>|stop <id>|restart <id>|status [id]|delete <id>|eject-iso <id>|purge-images|download-image <file> <url>|list-images|delete-image <file>|autostart}"
         exit 1
         ;;
 esac

@@ -245,11 +245,86 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         if ($vm_id === 'aapanel' || (!empty($vms[$vm_id]['is_default']))) {
             $errmsg = gettext("PERINGATAN: Virtual Machine 'aaPanel' adalah paket bawaan default pfSense dan TIDAK DAPAT DIHAPUS.");
         } elseif (isset($vms[$vm_id])) {
+            $disk_p = $vms[$vm_id]['disk_path'] ?? '';
+            $iso_p = $vms[$vm_id]['iso_path'] ?? '';
+            $vm_name = $vms[$vm_id]['name'] ?? $vm_id;
+
+            // Eksekusi pembersihan mendalam via kvm-manager
             mwexec("{$kvm_manager} delete " . escapeshellarg($vm_id));
+
+            // Pastikan berkas virtual disk fisik benar-benar terhapus dari storage
+            if (!empty($disk_p) && file_exists($disk_p)) {
+                @unlink($disk_p);
+            }
+            $vm_dir = "/usr/local/vm/{$vm_id}";
+            if (is_dir($vm_dir)) {
+                @rmdir($vm_dir);
+            }
+
+            // Hapus berkas media installer ISO jika ada dan tidak dipakai VM lain
+            if (!empty($iso_p) && file_exists($iso_p)) {
+                $used_elsewhere = false;
+                foreach ($vms as $k => $v) {
+                    if ($k !== $vm_id && !empty($v['iso_path']) && $v['iso_path'] === $iso_p) {
+                        $used_elsewhere = true;
+                        break;
+                    }
+                }
+                if (!$used_elsewhere) {
+                    @unlink($iso_p);
+                }
+            }
+
             unset($vms[$vm_id]);
             save_vm_config($vms);
-            $savemsg = gettext("Virtual Machine berhasil dihapus.");
+            $savemsg = sprintf(gettext("Virtual Machine '%s' dan seluruh berkas virtual disk berhasil dihapus permanen dari sistem penyimpanan."), htmlspecialchars($vm_name));
         }
+    } elseif ($act == 'eject_iso' && !empty($vm_id)) {
+        if (isset($vms[$vm_id])) {
+            $iso_p = $vms[$vm_id]['iso_path'] ?? '';
+            $iso_name = basename($iso_p);
+
+            mwexec("{$kvm_manager} eject-iso " . escapeshellarg($vm_id));
+
+            if (!empty($iso_p) && file_exists($iso_p)) {
+                $used_elsewhere = false;
+                foreach ($vms as $k => $v) {
+                    if ($k !== $vm_id && !empty($v['iso_path']) && $v['iso_path'] === $iso_p) {
+                        $used_elsewhere = true;
+                        break;
+                    }
+                }
+                if (!$used_elsewhere) {
+                    @unlink($iso_p);
+                }
+            }
+
+            $vms[$vm_id]['iso_path'] = '';
+            $vms[$vm_id]['install_mode'] = 'disk';
+            save_vm_config($vms);
+            $savemsg = sprintf(gettext("Media instalasi '%s' berhasil dilepas dari VM '%s' dan berkas ISO telah dihapus permanen dari penyimpanan agar tidak menjadi sampah."), htmlspecialchars($iso_name), htmlspecialchars($vms[$vm_id]['name']));
+        }
+    } elseif ($act == 'purge_images') {
+        mwexec("{$kvm_manager} purge-images");
+        if (is_dir($images_dir)) {
+            $files = glob("{$images_dir}/*");
+            if (!empty($files)) {
+                foreach ($files as $f) {
+                    if (is_file($f)) {
+                        @unlink($f);
+                    }
+                }
+            }
+        }
+        foreach ($vms as $k => &$v) {
+            if (!empty($v['iso_path'])) {
+                $v['iso_path'] = '';
+                $v['install_mode'] = 'disk';
+            }
+        }
+        save_vm_config($vms);
+        $savemsg = gettext("Seluruh sampah berkas ISO dan image instalasi berhasil dibersihkan dari penyimpanan pfSense.");
+        $act = 'images';
     } elseif ($act == 'upload_image') {
         // UPLOAD IMAGE MANUAL DARI BROWSER
         if (isset($_FILES['iso_file']) && $_FILES['iso_file']['error'] === UPLOAD_ERR_OK) {
@@ -528,9 +603,14 @@ display_top_tabs($tab_array);
                     </div>
 
                     <hr />
-                    <h4 style="margin-left: 15px; margin-bottom: 20px; color: #2a6496;">
+                    <h4 style="margin-left: 15px; margin-bottom: 10px; color: #2a6496;">
                         <i class="fa-solid fa-compact-disc"></i> <?= gettext("Pilihan Metode Instalasi (Online atau Upload Manual)") ?>
                     </h4>
+
+                    <div class="alert alert-info" style="margin-left: 15px; margin-right: 15px; margin-bottom: 15px; font-size: 12px;">
+                        <i class="fa-solid fa-circle-info"></i> <strong><?= gettext("Media Instalasi & Penghapusan Otomatis:") ?></strong>
+                        <?= gettext("Media ISO/citra yang dipilih atau diunggah di bawah hanya berfungsi sebagai installer sementara. Setelah instalasi OS selesai, Anda dapat langsung menghapus berkas ISO melalui tombol 'Selesai & Hapus ISO' di daftar VM agar tidak menjadi sampah. Jika VM ini dihapus di kemudian hari, seluruh Virtual Disk fisik (.raw) juga akan otomatis ikut terhapus bersih dari pfSense.") ?>
+                    </div>
 
                     <div class="form-group row">
                         <label class="col-sm-3 col-form-label text-right font-weight-bold"><?= gettext("Metode Sumber Image") ?></label>
@@ -782,6 +862,11 @@ display_top_tabs($tab_array);
 
 <?php elseif ($act == 'images'): ?>
     <!-- TAB ISO & IMAGES MANAGER -->
+    <div class="alert alert-info">
+        <i class="fa-solid fa-circle-info"></i> <strong><?= gettext("Pemberitahuan Media Instalasi:") ?></strong>
+        <?= gettext("Berkas ISO/citra yang ada di repositori ini hanya digunakan sebagai media boot sementara saat proses instalasi OS ke virtual disk. Setelah instalasi selesai, Anda disarankan langsung menghapus berkas ISO (atau klik tombol 'Selesai & Hapus ISO' di daftar VM) agar ruang penyimpanan pfSense tetap bersih dan tidak menjadi sampah.") ?>
+    </div>
+
     <div class="row">
         <!-- BOX UPLOAD MANUAL -->
         <div class="col-md-6">
@@ -884,8 +969,18 @@ display_top_tabs($tab_array);
 
     <!-- TABEL IMAGE TERSIMPAN -->
     <div class="panel panel-default">
-        <div class="panel-heading">
-            <h2 class="panel-title"><i class="fa-solid fa-folder-tree"></i> <?= gettext("Daftar Berkas Image / ISO di pfSense (/usr/local/vm/images/)") ?></h2>
+        <div class="panel-heading clearfix">
+            <div class="pull-left">
+                <h2 class="panel-title" style="margin-top: 4px;"><i class="fa-solid fa-folder-tree"></i> <?= gettext("Daftar Berkas Image / ISO di pfSense (/usr/local/vm/images/)") ?></h2>
+            </div>
+            <div class="pull-right">
+                <form method="post" action="services_virtual.php" style="display: inline-block;" onsubmit="return confirm('Apakah Anda yakin ingin menghapus dan membersihkan SEMUA berkas installer ISO/IMG di direktori penyimpanan pfSense?');">
+                    <input type="hidden" name="act" value="purge_images" />
+                    <button type="submit" class="btn btn-xs btn-danger" title="<?= gettext('Bersihkan semua berkas ISO agar menghemat ruang penyimpanan') ?>">
+                        <i class="fa-solid fa-broom"></i> <?= gettext("Bersihkan Semua Sampah ISO") ?>
+                    </button>
+                </form>
+            </div>
         </div>
         <div class="panel-body">
             <?php if (empty($available_images)): ?>
@@ -1116,8 +1211,17 @@ display_top_tabs($tab_array);
                                         <?php endif; ?>
                                     </div>
                                     <?php if (!empty($vm['iso_path'])): ?>
-                                        <div style="font-size: 11px; margin-top: 3px; color: #555;">
-                                            <i class="fa-solid fa-compact-disc text-primary"></i> ISO: <code><?= htmlspecialchars(basename($vm['iso_path'])) ?></code>
+                                        <div style="font-size: 11px; margin-top: 4px; padding: 4px 6px; background-color: #fcf8e3; border: 1px solid #faebcc; border-radius: 4px; color: #8a6d3b;">
+                                            <div><i class="fa-solid fa-compact-disc text-primary"></i> <strong>Installer:</strong> <?= htmlspecialchars(basename($vm['iso_path'])) ?></div>
+                                            <div style="margin-top: 3px;">
+                                                <form method="post" action="services_virtual.php" style="display: inline-block;" onsubmit="return confirm('Instalasi sistem operasi telah selesai? Media ISO akan dilepas dari VM dan berkas ISO akan dihapus permanen agar tidak menjadi sampah.');">
+                                                    <input type="hidden" name="act" value="eject_iso" />
+                                                    <input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>" />
+                                                    <button type="submit" class="btn btn-xs btn-warning" style="font-size: 10px; padding: 2px 6px;" title="<?= gettext('Instalasi selesai: Lepas & Hapus berkas installer dari penyimpanan') ?>">
+                                                        <i class="fa-solid fa-eject"></i> <?= gettext("Selesai & Hapus ISO") ?>
+                                                    </button>
+                                                </form>
+                                            </div>
                                         </div>
                                     <?php endif; ?>
                                 </td>
@@ -1179,10 +1283,10 @@ display_top_tabs($tab_array);
                                             <i class="fa-solid fa-lock"></i>
                                         </button>
                                     <?php else: ?>
-                                        <form method="post" action="services_virtual.php" style="display: inline-block;" onsubmit="return confirm('Apakah Anda yakin ingin menghapus VM ini secara permanen?');">
+                                        <form method="post" action="services_virtual.php" style="display: inline-block;" onsubmit="return confirm('Apakah Anda yakin ingin menghapus VM ini secara permanen beserta seluruh virtual disk dan datanya?');">
                                             <input type="hidden" name="act" value="del" />
                                             <input type="hidden" name="id" value="<?= htmlspecialchars($id) ?>" />
-                                            <button type="submit" class="btn btn-xs btn-danger" title="<?= gettext('Hapus Virtual Machine') ?>">
+                                            <button type="submit" class="btn btn-xs btn-danger" title="<?= gettext('Hapus Virtual Machine & Seluruh Virtual Disk') ?>">
                                                 <i class="fa-solid fa-trash"></i>
                                             </button>
                                         </form>
