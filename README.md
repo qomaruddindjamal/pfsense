@@ -76,20 +76,25 @@ bash <(curl -sSL https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main
 
 ## 📦 2. Pemasangan Paket Berformat `.pkg` di pfSense (Rekomendasi Cepat)
 
-Anda dapat menginstal paket secara langsung di console shell pfSense menggunakan perintah `pkg add`:
+> **💡 Catatan Penting:** Jika Anda menginstal pfSense menggunakan media **Custom Offline Installer (.iso / .img)** dari repository ini, seluruh paket di bawah ini **sudah otomatis terpasang secara offline**.
+
+Bagi Anda yang sudah memiliki instalasi pfSense yang sedang berjalan, paket dapat dipasang langsung melalui konsol shell pfSense:
 
 ```sh
 # 1. Pasang WireGuard (.pkg)
-pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/wireguard-pfsense.pkg
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/installer_source/packages/All/wireguard-pfsense.pkg
 
 # 2. Pasang Xray-core (.pkg) (VLESS, VMess, Trojan, Socks5, TUN, Routing)
-pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/xray-pfsense.pkg
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/installer_source/packages/All/xray-pfsense.pkg
 
 # 3. Pasang Mesin Virtual + aaPanel (.pkg)
-pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/kvm.pkg
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/installer_source/packages/All/kvm.pkg
 
 # 4. Pasang Speedtest Tool (.pkg) (Ookla Native + GitHub CLI)
-pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/speedtest.pkg
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/installer_source/packages/All/speedtest.pkg
+
+# 5. Pasang Wifi Manager (.pkg) (AP, VAP & Client Scanner)
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/installer_source/packages/All/wifi.pkg
 ```
 
 Setelah paket terpasang, gunakan CLI bawaan masing-masing:
@@ -97,6 +102,7 @@ Setelah paket terpasang, gunakan CLI bawaan masing-masing:
 - **Xray-core**: `xray-control {start|stop|restart|status|test|version}` atau `service xray start`
 - **Mesin Virtual / aaPanel**: `aapanel-pfsense {setup-bhyve|install-linux|status}`
 - **Speedtest**: `speedtest` atau akses WebGUI pada menu **Tools > Speedtest**
+- **Wifi Manager**: `wifi-manager {scan|status|connect}` atau menu **Interfaces > Wifi**
 
 ---
 
@@ -112,28 +118,24 @@ cd /root/pfsense_repo
 sh scripts/setup-pfsense-all.sh
 ```
 
-Atau pasang per modul:
+Atau pasang per paket individual:
 
-### A. WireGuard
 ```sh
-sh packages/wireguard/install-wireguard.sh
-```
-- File konfigurasi: `/usr/local/etc/wireguard/wg0.conf`
-- Menjalankan interface: `wg-quick up wg0`
+# A. WireGuard
+pkg add /root/pfsense_repo/installer_source/packages/All/wireguard-pfsense.pkg
 
-### B. Xray-core
-```sh
-sh packages/xray/install-xray.sh
+# B. Xray-core
+pkg add /root/pfsense_repo/installer_source/packages/All/xray-pfsense.pkg
+
+# C. Mesin Virtual KVM / aaPanel
+pkg add /root/pfsense_repo/installer_source/packages/All/kvm.pkg
+
+# D. Speedtest
+pkg add /root/pfsense_repo/installer_source/packages/All/speedtest.pkg
+
+# E. Wifi Manager
+pkg add /root/pfsense_repo/installer_source/packages/All/wifi.pkg
 ```
-- Protokol aktif: **VLESS** (port 443), **VMess** (port 8443), **Trojan** (port 9443), **Socks5** (port 10808), **TUN/Dokodemo** (port 12345).
-- File konfigurasi: `/usr/local/etc/xray/config.json`
-- Kelola layanan:
-  ```sh
-  service xray start
-  service xray status
-  service xray restart
-  service xray stop
-  ```
 
 ---
 
@@ -447,15 +449,15 @@ Paket Xray-core di pfSense memungkinkan router bertindak sebagai VPN gateway mul
 > - **pfSense** berbasis **FreeBSD** dan telah memiliki antarmuka WebGUI bawaan lengkap (Nginx + PHP) untuk routing, firewall, NAT, dan VPN.
 > - **aaPanel** dibuat khusus untuk distribusi **Linux** (Debian, Ubuntu, CentOS) dengan ketergantungan pada `systemd` dan `glibc`.
 > - **Opsi yang tersedia:**
->   1. Jika menggunakan VPS Linux terpisah: Jalankan `bash packages/aapanel/install-aapanel-linux.sh`.
->   2. Jika ingin menjalankan aaPanel di dalam mesin pfSense: Gunakan hypervisor bawaan pfSense yaitu **bhyve** melalui skrip `sh packages/aapanel/setup-aapanel-bhyve.sh` untuk menjalankan VM Linux kecil yang memuat aaPanel.
+>   1. Jika menggunakan VPS Linux terpisah: Pasang aaPanel langsung pada VPS Linux tersebut.
+>   2. Jika ingin menjalankan aaPanel di dalam mesin pfSense: Gunakan modul virtualisasi dari paket `kvm.pkg` via CLI `aapanel-pfsense setup-bhyve` atau `kvm-manager`.
 
 ---
 
 ## 📂 Struktur Direktori Repository
 
 ```
-├── .gitignore                          # Aturan filter Git (mengabaikan ISO, IMG, scripts/, packages/)
+├── .gitignore                          # Filter file besar (ISO/IMG) & konfigurasi pengabaian Git
 ├── LICENSE                             # Lisensi Apache-2.0
 ├── README.md                           # Dokumentasi utama proyek
 │
@@ -469,14 +471,12 @@ Paket Xray-core di pfSense memungkinkan router bertindak sebagai VPN gateway mul
 │   ├── usr/local/share/packages/offline/ # Symlink terpadu ke paket offline kustom (wireguard, xray, kvm, wifi, speedtest)
 │   └── usr/local/www/web-installer/    # Web installer UI Netgate
 │
-├── scripts/
+└── scripts/                            # Skrip otomatisasi & migrasi publik
     ├── build_pkg.py                    # Script pembuat paket .pkg
     ├── remaster_iso.sh                 # Script remaster ISO offline
     ├── install-pfsense-from-linux.sh   # Skrip takeover menimpa Linux ke pfSense
-    ├── setup-pfsense-all.sh            # Skrip otomatis pasang WireGuard & Xray
+    ├── setup-pfsense-all.sh            # Skrip otomatis pasang seluruh paket kustom pfSense
     └── config.xml.template             # Template konfigurasi pfSense otomatis
-
-
 ```
 
 ---
