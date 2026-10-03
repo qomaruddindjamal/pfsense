@@ -1,7 +1,8 @@
 #!/bin/sh
 # ==============================================================================
 # kvm-manager - Virtual Machine & Hypervisor Manager for pfSense (FreeBSD 14)
-# Supports KVM/Bhyve Virtual Machines with aaPanel Built-in Default VM
+# Supports KVM/Bhyve Virtual Machines with aaPanel Built-in Default VM,
+# Manual Image Uploads, and Online ISO Installation
 # ==============================================================================
 
 set -e
@@ -9,10 +10,11 @@ set -e
 CONF_DIR="/usr/local/etc/kvm"
 CONF_FILE="${CONF_DIR}/vms.json"
 VM_BASE_DIR="/usr/local/vm"
+IMAGES_DIR="/usr/local/vm/images"
 RUN_DIR="/var/run/kvm"
 LOG_DIR="/var/log/kvm"
 
-mkdir -p "${CONF_DIR}" "${VM_BASE_DIR}" "${RUN_DIR}" "${LOG_DIR}"
+mkdir -p "${CONF_DIR}" "${VM_BASE_DIR}" "${IMAGES_DIR}" "${RUN_DIR}" "${LOG_DIR}"
 
 # ------------------------------------------------------------------------------
 # Inisialisasi Konfigurasi Default jika belum ada
@@ -35,6 +37,8 @@ init_config() {
     "ram": 2048,
     "disk_size": 20,
     "disk_path": "/usr/local/vm/aapanel/disk.raw",
+    "iso_path": "",
+    "install_mode": "disk",
     "vnet": "tap0",
     "bridge_mode": true,
     "bridge_interface": "bridge0",
@@ -61,6 +65,83 @@ setup_hypervisor() {
         fi
     done
     echo "[✓] Hypervisor kernel modules siap."
+}
+
+# ------------------------------------------------------------------------------
+# Unduh Image Daring (Download Online di Latar Belakang)
+# ------------------------------------------------------------------------------
+download_image() {
+    FILE_NAME="$1"
+    URL="$2"
+    if [ -z "${FILE_NAME}" ] || [ -z "${URL}" ]; then
+        echo "Error: Masukkan nama berkas dan URL!"
+        exit 1
+    fi
+    mkdir -p "${IMAGES_DIR}"
+    DEST="${IMAGES_DIR}/${FILE_NAME}"
+    LOG="${LOG_DIR}/download_${FILE_NAME}.log"
+    PID_F="${RUN_DIR}/download_${FILE_NAME}.pid"
+
+    echo "[*] Memulai pengunduhan ${URL} ke ${DEST}..."
+    nohup sh -c '
+        echo $$ > "'"${PID_F}"'"
+        echo "[$(date)] Memulai unduhan: '"${URL}"'..." > "'"${LOG}"'"
+        if which curl >/dev/null 2>&1; then
+            curl -k -L -C - -o "'"${DEST}"'" "'"${URL}"'" >> "'"${LOG}"'" 2>&1
+        else
+            fetch -o "'"${DEST}"'" "'"${URL}"'" >> "'"${LOG}"'" 2>&1
+        fi
+        RET=$?
+        rm -f "'"${PID_F}"'"
+        echo "[$(date)] Unduhan selesai (exit code: $RET)." >> "'"${LOG}"'"
+    ' </dev/null >/dev/null 2>&1 &
+
+    echo "[✓] Pengunduhan image '${FILE_NAME}' sedang berlangsung di latar belakang."
+}
+
+# ------------------------------------------------------------------------------
+# Daftar Berkas Image / ISO yang Tersedia
+# ------------------------------------------------------------------------------
+list_images() {
+    mkdir -p "${IMAGES_DIR}"
+    php -r '
+        $dir = "/usr/local/vm/images";
+        $files = [];
+        if (is_dir($dir)) {
+            foreach (scandir($dir) as $f) {
+                if ($f === "." || $f === "..") continue;
+                $p = "{$dir}/{$f}";
+                if (is_file($p)) {
+                    $bytes = filesize($p);
+                    $mb = round($bytes / (1024 * 1024), 2);
+                    $gb = round($bytes / (1024 * 1024 * 1024), 2);
+                    $files[] = [
+                        "name" => $f,
+                        "path" => $p,
+                        "size_bytes" => $bytes,
+                        "size_human" => ($gb >= 1) ? "{$gb} GB" : "{$mb} MB",
+                        "modified" => date("Y-m-d H:i:s", filemtime($p))
+                    ];
+                }
+            }
+        }
+        echo json_encode($files, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    '
+}
+
+# ------------------------------------------------------------------------------
+# Hapus Berkas Image / ISO
+# ------------------------------------------------------------------------------
+delete_image() {
+    FILE_NAME="$1"
+    TARGET="${IMAGES_DIR}/${FILE_NAME}"
+    if [ -f "${TARGET}" ]; then
+        rm -f "${TARGET}"
+        echo "[✓] Berkas image '${FILE_NAME}' berhasil dihapus."
+    else
+        echo "Error: Berkas '${FILE_NAME}' tidak ditemukan di ${IMAGES_DIR}!"
+        exit 1
+    fi
 }
 
 # ------------------------------------------------------------------------------
@@ -108,6 +189,7 @@ start_vm() {
     RAM=$(php -r '$c = json_decode($argv[1], true); echo $c["ram"] ?? 2048;' "${VM_CONF}")
     DISK_SIZE=$(php -r '$c = json_decode($argv[1], true); echo $c["disk_size"] ?? 20;' "${VM_CONF}")
     DISK_PATH=$(php -r '$c = json_decode($argv[1], true); echo $c["disk_path"] ?? "/usr/local/vm/'"${VM_ID}"'/disk.raw";' "${VM_CONF}")
+    ISO_PATH=$(php -r '$c = json_decode($argv[1], true); echo $c["iso_path"] ?? "";' "${VM_CONF}")
     VNET=$(php -r '$c = json_decode($argv[1], true); echo $c["vnet"] ?? "tap0";' "${VM_CONF}")
     BRIDGE_MODE=$(php -r '$c = json_decode($argv[1], true); echo ($c["bridge_mode"] ?? true) ? "1" : "0";' "${VM_CONF}")
     BRIDGE_IF=$(php -r '$c = json_decode($argv[1], true); echo $c["bridge_interface"] ?? "bridge0";' "${VM_CONF}")
@@ -151,23 +233,30 @@ VM_ID="$1"
 CPUS="$2"
 RAM="$3"
 DISK_PATH="$4"
-VNET="$5"
-PID_FILE="$6"
-LOG_FILE="$7"
+ISO_PATH="$5"
+VNET="$6"
+PID_FILE="$7"
+LOG_FILE="$8"
 
 echo $$ > "${PID_FILE}"
 echo "[$(date)] Supervisor KVM VM '${VM_ID}' dimulai (PID $$)" >> "${LOG_FILE}"
 
-# Jika ada file runner khusus atau bhyve biner:
+# Periksa apakah ada ISO attachment
+ISO_ARG=""
+if [ -n "${ISO_PATH}" ] && [ -f "${ISO_PATH}" ]; then
+    echo "[$(date)] Menyematkan media instalasi ISO: ${ISO_PATH}" >> "${LOG_FILE}"
+    ISO_ARG="-s 4:0,ahci-cd,${ISO_PATH}"
+fi
+
+# Jalankan bhyve command jika biner tersedia
 if [ -x /usr/sbin/bhyve ]; then
-    # Jalankan bhyve command
-    # Parameter standard bhyve: hostbridge, virtio-blk, virtio-net, lpc
     /usr/sbin/bhyve -A -H -P \
         -c "${CPUS}" -m "${RAM}M" \
         -s 0:0,hostbridge \
         -s 1:0,lpc \
         -s 2:0,virtio-net,"${VNET}" \
         -s 3:0,virtio-blk,"${DISK_PATH}" \
+        ${ISO_ARG} \
         -l com1,stdio \
         "${VM_ID}" >> "${LOG_FILE}" 2>&1 || true
 fi
@@ -178,7 +267,7 @@ if [ "${VM_ID}" = "aapanel" ]; then
     php -S 0.0.0.0:8888 -t /usr/local/share/aapanel/www >> "${LOG_FILE}" 2>&1 || true
 fi
 
-# Fallback loop agar process tetap berjalan sebagai container runtime
+# Loop supervisor agar proses runtime tetap aktif
 while true; do
     sleep 3600
 done
@@ -227,8 +316,8 @@ SUPEOF
 HTMLEOF
     fi
 
-    # Start the supervisor daemon in background
-    nohup /bin/sh "${SUPERVISOR_SCRIPT}" "${VM_ID}" "${CPUS}" "${RAM}" "${DISK_PATH}" "${VNET}" "${PID_FILE}" "${LOG_FILE}" </dev/null >/dev/null 2>&1 &
+    # Start supervisor daemon in background with safe redirection
+    nohup /bin/sh "${SUPERVISOR_SCRIPT}" "${VM_ID}" "${CPUS}" "${RAM}" "${DISK_PATH}" "${ISO_PATH}" "${VNET}" "${PID_FILE}" "${LOG_FILE}" </dev/null >/dev/null 2>&1 &
     
     sleep 1
     if [ -f "${PID_FILE}" ]; then
@@ -391,6 +480,15 @@ case "$1" in
     delete)
         delete_vm "$2"
         ;;
+    download-image|download)
+        download_image "$2" "$3"
+        ;;
+    list-images|images)
+        list_images
+        ;;
+    delete-image|del-image)
+        delete_image "$2"
+        ;;
     autostart)
         autostart_vms
         ;;
@@ -398,7 +496,7 @@ case "$1" in
         init_config
         ;;
     *)
-        echo "Penggunaan: kvm-manager {setup|start <id>|stop <id>|restart <id>|status [id]|delete <id>|autostart}"
+        echo "Penggunaan: kvm-manager {setup|start <id>|stop <id>|restart <id>|status [id]|delete <id>|download-image <file> <url>|list-images|delete-image <file>|autostart}"
         exit 1
         ;;
 esac

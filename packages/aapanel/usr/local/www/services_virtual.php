@@ -13,15 +13,65 @@ $pglinks = array("", "@self");
 
 $conf_dir = "/usr/local/etc/kvm";
 $conf_file = "{$conf_dir}/vms.json";
+$images_dir = "/usr/local/vm/images";
 $kvm_manager = "/usr/local/bin/kvm-manager";
 
 $savemsg = "";
 $errmsg = "";
 
-// Pastikan konfigurasi default tersedia
+// Pastikan direktori konfigurasi dan image tersedia
 if (!is_dir($conf_dir)) {
     @mkdir($conf_dir, 0755, true);
 }
+if (!is_dir($images_dir)) {
+    @mkdir($images_dir, 0755, true);
+}
+
+// Preset Berkas ISO Daring Berdasarkan Tipe OS
+$os_online_presets = [
+    'linux' => [
+        [
+            'name' => 'Debian 12 Bookworm (Minimal Netinst ~60MB)',
+            'filename' => 'debian-12-netinst.iso',
+            'url' => 'https://cdimage.debian.org/debian-cd/current/amd64/iso-cd/debian-12.7.0-amd64-netinst.iso'
+        ],
+        [
+            'name' => 'Alpine Linux 3.20 (Virtual Standard ~60MB)',
+            'filename' => 'alpine-virt-3.20.3-x86_64.iso',
+            'url' => 'https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-virt-3.20.3-x86_64.iso'
+        ],
+        [
+            'name' => 'Ubuntu Server 24.04 LTS (Mini/Netboot ~100MB)',
+            'filename' => 'noble-mini-iso-amd64.iso',
+            'url' => 'https://cdimage.ubuntu.com/ubuntu-mini-iso/daily-live/current/noble-mini-iso-amd64.iso'
+        ],
+        [
+            'name' => 'Rocky Linux 9 Minimal (~2GB)',
+            'filename' => 'Rocky-9-latest-x86_64-minimal.iso',
+            'url' => 'https://download.rockylinux.org/pub/rocky/9/isos/x86_64/Rocky-9-latest-x86_64-minimal.iso'
+        ]
+    ],
+    'freebsd' => [
+        [
+            'name' => 'FreeBSD 14.1-RELEASE (Bootonly ~350MB)',
+            'filename' => 'FreeBSD-14.1-RELEASE-amd64-bootonly.iso',
+            'url' => 'https://download.freebsd.org/releases/amd64/amd64/ISO-IMAGES/14.1/FreeBSD-14.1-RELEASE-amd64-bootonly.iso'
+        ],
+        [
+            'name' => 'FreeBSD 13.3-RELEASE (Bootonly ~350MB)',
+            'filename' => 'FreeBSD-13.3-RELEASE-amd64-bootonly.iso',
+            'url' => 'https://download.freebsd.org/releases/amd64/amd64/ISO-IMAGES/13.3/FreeBSD-13.3-RELEASE-amd64-bootonly.iso'
+        ]
+    ],
+    'windows' => [
+        [
+            'name' => 'RedHat VirtIO Windows Drivers ISO (~500MB)',
+            'filename' => 'virtio-win.iso',
+            'url' => 'https://fedorapeople.org/groups/virt/virtio-win/direct-downloads/latest-virtio/virtio-win.iso'
+        ]
+    ],
+    'other' => []
+];
 
 // Inisialisasi file vms.json jika belum ada
 function get_vm_config() {
@@ -48,6 +98,8 @@ function get_vm_config() {
                     'ram' => 2048,
                     'disk_size' => 20,
                     'disk_path' => '/usr/local/vm/aapanel/disk.raw',
+                    'iso_path' => '',
+                    'install_mode' => 'disk',
                     'vnet' => 'tap0',
                     'bridge_mode' => true,
                     'bridge_interface' => 'bridge0',
@@ -75,6 +127,8 @@ function get_vm_config() {
             'ram' => 2048,
             'disk_size' => 20,
             'disk_path' => '/usr/local/vm/aapanel/disk.raw',
+            'iso_path' => '',
+            'install_mode' => 'disk',
             'vnet' => 'tap0',
             'bridge_mode' => true,
             'bridge_interface' => 'bridge0',
@@ -106,11 +160,67 @@ function is_vm_running($vm_id) {
     return false;
 }
 
+// Dapatkan daftar berkas image yang ada
+function get_available_images() {
+    global $images_dir;
+    $files = [];
+    if (is_dir($images_dir)) {
+        foreach (scandir($images_dir) as $f) {
+            if ($f === '.' || $f === '..') continue;
+            $p = "{$images_dir}/{$f}";
+            if (is_file($p)) {
+                $bytes = filesize($p);
+                $mb = round($bytes / (1024 * 1024), 2);
+                $gb = round($bytes / (1024 * 1024 * 1024), 2);
+                $files[] = [
+                    'name' => $f,
+                    'path' => $p,
+                    'size_bytes' => $bytes,
+                    'size_human' => ($gb >= 1) ? "{$gb} GB" : "{$mb} MB",
+                    'modified' => date('Y-m-d H:i', filemtime($p))
+                ];
+            }
+        }
+    }
+    return $files;
+}
+
+// Cek unduhan yang sedang berjalan
+function get_active_downloads() {
+    $downloads = [];
+    $pids = glob("/var/run/kvm/download_*.pid");
+    if (!empty($pids)) {
+        foreach ($pids as $pf) {
+            $fname = preg_replace('/^download_(.*)\.pid$/', '$1', basename($pf));
+            $pid = trim(@file_get_contents($pf));
+            if (!empty($pid) && is_numeric($pid)) {
+                $check = shell_exec("/bin/ps -p " . escapeshellarg($pid) . " -o pid= 2>/dev/null");
+                if (!empty(trim($check))) {
+                    $log_f = "/var/log/kvm/download_{$fname}.log";
+                    $last_log = "";
+                    if (file_exists($log_f)) {
+                        $last_log = shell_exec("tail -n 3 " . escapeshellarg($log_f) . " 2>/dev/null");
+                    }
+                    $cur_path = "/usr/local/vm/images/{$fname}";
+                    $cur_size = file_exists($cur_path) ? round(filesize($cur_path) / (1024 * 1024), 2) . " MB" : "0 MB";
+                    $downloads[] = [
+                        'filename' => $fname,
+                        'pid' => $pid,
+                        'current_size' => $cur_size,
+                        'log' => $last_log
+                    ];
+                }
+            }
+        }
+    }
+    return $downloads;
+}
+
 $vms = get_vm_config();
 $act = $_REQUEST['act'] ?? '';
 $vm_id = $_REQUEST['id'] ?? '';
 
-// Handle VM Actions (Start, Stop, Restart, Delete)
+// Handle VM Actions, Uploads, and Downloads
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($act == 'setup_hypervisor') {
         mwexec("{$kvm_manager} setup");
@@ -140,6 +250,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             save_vm_config($vms);
             $savemsg = gettext("Virtual Machine berhasil dihapus.");
         }
+    } elseif ($act == 'upload_image') {
+        // UPLOAD IMAGE MANUAL DARI BROWSER
+        if (isset($_FILES['iso_file']) && $_FILES['iso_file']['error'] === UPLOAD_ERR_OK) {
+            $orig_name = basename($_FILES['iso_file']['name']);
+            $safe_name = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $orig_name);
+            $dest = "{$images_dir}/{$safe_name}";
+            if (move_uploaded_file($_FILES['iso_file']['tmp_name'], $dest)) {
+                $savemsg = gettext("Berkas image '") . htmlspecialchars($safe_name) . gettext("' berhasil diunggah ke repositori images.");
+            } else {
+                $errmsg = gettext("Gagal menyimpan berkas yang diunggah ke ") . htmlspecialchars($dest);
+            }
+        } else {
+            $upload_err_code = $_FILES['iso_file']['error'] ?? 'No file';
+            $errmsg = gettext("Gagal mengunggah berkas. Kode kesalahan: ") . $upload_err_code;
+        }
+        $act = 'images';
+    } elseif ($act == 'download_image') {
+        // DOWNLOAD IMAGE DARING DARI URL
+        $down_url = trim($_POST['download_url'] ?? '');
+        $down_file = trim($_POST['download_filename'] ?? '');
+        if (empty($down_url)) {
+            $errmsg = gettext("URL pengunduhan image tidak boleh kosong!");
+        } else {
+            if (empty($down_file)) {
+                $parsed = basename(parse_url($down_url, PHP_URL_PATH));
+                $down_file = !empty($parsed) ? $parsed : ("os_image_" . time() . ".iso");
+            }
+            $safe_down_file = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $down_file);
+            mwexec_bg("{$kvm_manager} download-image " . escapeshellarg($safe_down_file) . " " . escapeshellarg($down_url));
+            $savemsg = gettext("Pengunduhan image daring '") . htmlspecialchars($safe_down_file) . gettext("' dimulai di latar belakang.");
+        }
+        $act = 'images';
+    } elseif ($act == 'delete_image') {
+        $del_file = trim($_POST['image_filename'] ?? '');
+        if (!empty($del_file)) {
+            $safe_del = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $del_file);
+            mwexec("{$kvm_manager} delete-image " . escapeshellarg($safe_del));
+            $savemsg = gettext("Berkas image '") . htmlspecialchars($safe_del) . gettext("' berhasil dihapus.");
+        }
+        $act = 'images';
     } elseif ($act == 'save_vm') {
         $edit_id = trim($_POST['vm_id'] ?? '');
         $is_aapanel = ($edit_id === 'aapanel' || !empty($vms[$edit_id]['is_default']));
@@ -178,10 +328,44 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 save_vm_config($vms);
                 $savemsg = gettext("Konfigurasi aaPanel (HDD, RAM, Virtual Ethernet, Bridge Mode) berhasil diperbarui.");
             } else {
-                // Untuk VM custom
+                // Untuk VM custom: Dukungan Instalasi Online atau Upload Manual
                 $name = trim($_POST['name'] ?? $edit_id);
                 $description = trim($_POST['description'] ?? '');
                 $os = trim($_POST['os'] ?? 'linux');
+                $install_mode = trim($_POST['install_mode'] ?? 'online');
+                $iso_path = "";
+
+                // Periksa apakah ada upload manual berkas ISO langsung di form ini
+                if (isset($_FILES['vm_iso_upload']) && $_FILES['vm_iso_upload']['error'] === UPLOAD_ERR_OK) {
+                    $upl_name = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', basename($_FILES['vm_iso_upload']['name']));
+                    $dest_path = "{$images_dir}/{$upl_name}";
+                    if (move_uploaded_file($_FILES['vm_iso_upload']['tmp_name'], $dest_path)) {
+                        $iso_path = $dest_path;
+                    }
+                }
+
+                // Jika tidak upload langsung, gunakan pilihan form
+                if (empty($iso_path)) {
+                    if ($install_mode === 'manual') {
+                        $sel_img = trim($_POST['selected_image'] ?? '');
+                        if (!empty($sel_img) && file_exists("{$images_dir}/{$sel_img}")) {
+                            $iso_path = "{$images_dir}/{$sel_img}";
+                        }
+                    } elseif ($install_mode === 'online') {
+                        $on_url = trim($_POST['online_iso_url'] ?? '');
+                        $on_file = trim($_POST['online_iso_file'] ?? '');
+                        if (!empty($on_url)) {
+                            if (empty($on_file)) {
+                                $on_file = basename(parse_url($on_url, PHP_URL_PATH)) ?: ("{$edit_id}_install.iso");
+                            }
+                            $safe_on_file = preg_replace('/[^a-zA-Z0-9_\-\.]/', '_', $on_file);
+                            $iso_path = "{$images_dir}/{$safe_on_file}";
+                            if (!file_exists($iso_path)) {
+                                mwexec_bg("{$kvm_manager} download-image " . escapeshellarg($safe_on_file) . " " . escapeshellarg($on_url));
+                            }
+                        }
+                    }
+                }
 
                 $vms[$edit_id] = [
                     'id' => $edit_id,
@@ -194,6 +378,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     'ram' => $ram,
                     'disk_size' => $disk_size,
                     'disk_path' => $disk_path,
+                    'iso_path' => $iso_path,
+                    'install_mode' => $install_mode,
                     'vnet' => $vnet,
                     'bridge_mode' => $bridge_mode,
                     'bridge_interface' => $bridge_interface,
@@ -232,6 +418,9 @@ if (empty($net_interfaces)) {
     $net_interfaces = ['vtnet0', 'em0', 'igb0', 're0'];
 }
 
+$available_images = get_available_images();
+$active_downloads = get_active_downloads();
+
 include("head.inc");
 
 // Tampilkan alert box
@@ -244,7 +433,8 @@ if ($errmsg) {
 
 // Navigasi Tabs
 $tab_array = array();
-$tab_array[] = array(gettext("Virtual Machines"), ($act != 'hypervisor' && $act != 'network'), "services_virtual.php");
+$tab_array[] = array(gettext("Virtual Machines"), ($act != 'images' && $act != 'hypervisor' && $act != 'network'), "services_virtual.php");
+$tab_array[] = array(gettext("ISO & Images Manager"), ($act == 'images'), "services_virtual.php?act=images");
 $tab_array[] = array(gettext("Hypervisor Status"), ($act == 'hypervisor'), "services_virtual.php?act=hypervisor");
 $tab_array[] = array(gettext("Network & Bridge"), ($act == 'network'), "services_virtual.php?act=network");
 display_top_tabs($tab_array);
@@ -264,6 +454,8 @@ display_top_tabs($tab_array);
         'ram' => 2048,
         'disk_size' => 20,
         'disk_path' => '',
+        'iso_path' => '',
+        'install_mode' => 'online',
         'vnet' => 'tap0',
         'bridge_mode' => true,
         'bridge_interface' => 'bridge0',
@@ -289,7 +481,7 @@ display_top_tabs($tab_array);
                 </div>
             <?php endif; ?>
 
-            <form method="post" action="services_virtual.php">
+            <form method="post" action="services_virtual.php" enctype="multipart/form-data">
                 <input type="hidden" name="act" value="save_vm" />
                 <input type="hidden" name="vm_id" value="<?= htmlspecialchars($curr_vm['id'] ?: ($is_aapanel ? 'aapanel' : '')) ?>" />
 
@@ -325,12 +517,109 @@ display_top_tabs($tab_array);
                     <div class="form-group row">
                         <label class="col-sm-3 col-form-label text-right font-weight-bold"><?= gettext("Tipe Sistem Operasi (OS)") ?></label>
                         <div class="col-sm-4">
-                            <select name="os" class="form-control">
-                                <option value="linux" <?= ($curr_vm['os'] == 'linux') ? 'selected' : '' ?>>Linux (Ubuntu / Debian / CentOS / AlmaLinux)</option>
+                            <select name="os" id="os_select" class="form-control" onchange="onOsTypeChange(this.value)">
+                                <option value="linux" <?= ($curr_vm['os'] == 'linux') ? 'selected' : '' ?>>Linux (Ubuntu / Debian / CentOS / Alpine / Rocky)</option>
                                 <option value="freebsd" <?= ($curr_vm['os'] == 'freebsd') ? 'selected' : '' ?>>FreeBSD / BSD Guest</option>
                                 <option value="windows" <?= ($curr_vm['os'] == 'windows') ? 'selected' : '' ?>>Microsoft Windows</option>
                                 <option value="other" <?= ($curr_vm['os'] == 'other') ? 'selected' : '' ?>>Custom / Other</option>
                             </select>
+                            <small class="form-text text-muted"><?= gettext("Menyesuaikan preset instalasi online dan optimasi driver bhyve.") ?></small>
+                        </div>
+                    </div>
+
+                    <hr />
+                    <h4 style="margin-left: 15px; margin-bottom: 20px; color: #2a6496;">
+                        <i class="fa-solid fa-compact-disc"></i> <?= gettext("Pilihan Metode Instalasi (Online atau Upload Manual)") ?>
+                    </h4>
+
+                    <div class="form-group row">
+                        <label class="col-sm-3 col-form-label text-right font-weight-bold"><?= gettext("Metode Sumber Image") ?></label>
+                        <div class="col-sm-7">
+                            <div class="radio">
+                                <label>
+                                    <input type="radio" name="install_mode" value="online" id="mode_online" <?= ($curr_vm['install_mode'] == 'online') ? 'checked' : '' ?> onclick="toggleInstallMode('online')" />
+                                    <strong><i class="fa-solid fa-cloud-arrow-down text-primary"></i> <?= gettext("Install Online (Pilih Preset Resmi OS atau Masukkan URL)") ?></strong>
+                                </label>
+                            </div>
+                            <div class="radio">
+                                <label>
+                                    <input type="radio" name="install_mode" value="manual" id="mode_manual" <?= ($curr_vm['install_mode'] == 'manual') ? 'checked' : '' ?> onclick="toggleInstallMode('manual')" />
+                                    <strong><i class="fa-solid fa-cloud-arrow-up text-success"></i> <?= gettext("Upload Manual / Pilih Berkas Image dari Komputer") ?></strong>
+                                </label>
+                            </div>
+                            <div class="radio">
+                                <label>
+                                    <input type="radio" name="install_mode" value="disk" id="mode_disk" <?= ($curr_vm['install_mode'] == 'disk') ? 'checked' : '' ?> onclick="toggleInstallMode('disk')" />
+                                    <strong><i class="fa-solid fa-hard-drive text-muted"></i> <?= gettext("Boot dari Virtual Disk (Tanpa Media ISO Instalasi)") ?></strong>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- BOX INSTALL ONLINE -->
+                    <div id="box_install_online" style="<?= ($curr_vm['install_mode'] == 'online') ? '' : 'display: none;' ?>">
+                        <div class="form-group row">
+                            <label class="col-sm-3 col-form-label text-right font-weight-bold"><?= gettext("Preset Image Online Resmi") ?></label>
+                            <div class="col-sm-7">
+                                <select id="preset_online_select" class="form-control" onchange="applyPresetUrl(this.value)">
+                                    <option value=""><?= gettext("-- Pilih Preset Image Resmi OS --") ?></option>
+                                    <?php foreach ($os_online_presets['linux'] as $idx => $p): ?>
+                                        <option value="<?= htmlspecialchars(json_encode($p)) ?>" data-os="linux"><?= htmlspecialchars($p['name']) ?></option>
+                                    <?php endforeach; ?>
+                                    <?php foreach ($os_online_presets['freebsd'] as $idx => $p): ?>
+                                        <option value="<?= htmlspecialchars(json_encode($p)) ?>" data-os="freebsd"><?= htmlspecialchars($p['name']) ?></option>
+                                    <?php endforeach; ?>
+                                    <?php foreach ($os_online_presets['windows'] as $idx => $p): ?>
+                                        <option value="<?= htmlspecialchars(json_encode($p)) ?>" data-os="windows"><?= htmlspecialchars($p['name']) ?></option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="form-group row">
+                            <label class="col-sm-3 col-form-label text-right font-weight-bold"><?= gettext("URL Download Image Daring") ?></label>
+                            <div class="col-sm-7">
+                                <input type="url" class="form-control" name="online_iso_url" id="online_iso_url" placeholder="https://example.com/os.iso" />
+                                <small class="form-text text-muted"><?= gettext("Jika berkas belum ada di repositori lokal, pfSense akan mengunduhnya secara otomatis di latar belakang.") ?></small>
+                            </div>
+                        </div>
+
+                        <div class="form-group row">
+                            <label class="col-sm-3 col-form-label text-right font-weight-bold"><?= gettext("Nama File Simpanan") ?></label>
+                            <div class="col-sm-4">
+                                <input type="text" class="form-control" name="online_iso_file" id="online_iso_file" placeholder="nama_berkas.iso" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- BOX UPLOAD MANUAL -->
+                    <div id="box_install_manual" style="<?= ($curr_vm['install_mode'] == 'manual') ? '' : 'display: none;' ?>">
+                        <div class="form-group row">
+                            <label class="col-sm-3 col-form-label text-right font-weight-bold"><?= gettext("Pilih dari Image yang Sudah Diunggah") ?></label>
+                            <div class="col-sm-5">
+                                <select name="selected_image" class="form-control">
+                                    <option value=""><?= gettext("-- Pilih Image Tersedia --") ?></option>
+                                    <?php foreach ($available_images as $img): ?>
+                                        <?php $isSelected = (basename($curr_vm['iso_path']) === $img['name']); ?>
+                                        <option value="<?= htmlspecialchars($img['name']) ?>" <?= $isSelected ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($img['name']) ?> (<?= htmlspecialchars($img['size_human']) ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                            </div>
+                            <div class="col-sm-2">
+                                <a href="services_virtual.php?act=images" class="btn btn-default" target="_blank" title="Kelola file image di tab baru">
+                                    <i class="fa-solid fa-folder-open"></i> <?= gettext("Kelola Image") ?>
+                                </a>
+                            </div>
+                        </div>
+
+                        <div class="form-group row">
+                            <label class="col-sm-3 col-form-label text-right font-weight-bold"><?= gettext("Atau Upload Berkas Baru") ?></label>
+                            <div class="col-sm-7">
+                                <input type="file" name="vm_iso_upload" class="form-control" accept=".iso,.img,.raw,.qcow2" />
+                                <small class="form-text text-muted"><?= gettext("Unggah berkas image (.iso, .img, .raw, .qcow2) langsung dari perangkat Anda dan sematkan ke VM ini.") ?></small>
+                            </div>
                         </div>
                     </div>
                 <?php endif; ?>
@@ -456,6 +745,192 @@ display_top_tabs($tab_array);
         </div>
     </div>
 
+    <script type="text/javascript">
+    function toggleInstallMode(mode) {
+        var boxOnline = document.getElementById('box_install_online');
+        var boxManual = document.getElementById('box_install_manual');
+        if (boxOnline) boxOnline.style.display = (mode === 'online') ? 'block' : 'none';
+        if (boxManual) boxManual.style.display = (mode === 'manual') ? 'block' : 'none';
+    }
+
+    function onOsTypeChange(osType) {
+        var select = document.getElementById('preset_online_select');
+        if (!select) return;
+        var options = select.options;
+        for (var i = 0; i < options.length; i++) {
+            var opt = options[i];
+            var dataOs = opt.getAttribute('data-os');
+            if (!dataOs) continue;
+            if (dataOs === osType || osType === 'other') {
+                opt.style.display = 'block';
+            } else {
+                opt.style.display = 'none';
+            }
+        }
+        select.selectedIndex = 0;
+    }
+
+    function applyPresetUrl(jsonStr) {
+        if (!jsonStr) return;
+        try {
+            var data = JSON.parse(jsonStr);
+            if (data.url) document.getElementById('online_iso_url').value = data.url;
+            if (data.filename) document.getElementById('online_iso_file').value = data.filename;
+        } catch(e) {}
+    }
+    </script>
+
+<?php elseif ($act == 'images'): ?>
+    <!-- TAB ISO & IMAGES MANAGER -->
+    <div class="row">
+        <!-- BOX UPLOAD MANUAL -->
+        <div class="col-md-6">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title"><i class="fa-solid fa-cloud-arrow-up text-success"></i> <?= gettext("Upload Berkas Image / ISO Manual") ?></h2>
+                </div>
+                <div class="panel-body">
+                    <form method="post" action="services_virtual.php" enctype="multipart/form-data">
+                        <input type="hidden" name="act" value="upload_image" />
+                        <div class="form-group">
+                            <label class="font-weight-bold"><?= gettext("Pilih Berkas dari Komputer (.iso, .img, .raw, .qcow2)") ?></label>
+                            <input type="file" name="iso_file" class="form-control" accept=".iso,.img,.raw,.qcow2" required />
+                        </div>
+                        <button type="submit" class="btn btn-success">
+                            <i class="fa-solid fa-upload"></i> <?= gettext("Unggah ke pfSense") ?>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- BOX DOWNLOAD ONLINE -->
+        <div class="col-md-6">
+            <div class="panel panel-default">
+                <div class="panel-heading">
+                    <h2 class="panel-title"><i class="fa-solid fa-cloud-arrow-down text-primary"></i> <?= gettext("Unduh Image Resmi / Online") ?></h2>
+                </div>
+                <div class="panel-body">
+                    <form method="post" action="services_virtual.php">
+                        <input type="hidden" name="act" value="download_image" />
+                        <div class="form-group">
+                            <label class="font-weight-bold"><?= gettext("Pilih Preset Sistem Operasi Resmi") ?></label>
+                            <select class="form-control" onchange="var d=this.value?JSON.parse(this.value):null; if(d){document.getElementById('down_url').value=d.url; document.getElementById('down_file').value=d.filename;}">
+                                <option value=""><?= gettext("-- Pilih Preset OS Populer --") ?></option>
+                                <optgroup label="Linux Distributions">
+                                    <?php foreach ($os_online_presets['linux'] as $p): ?>
+                                        <option value="<?= htmlspecialchars(json_encode($p)) ?>"><?= htmlspecialchars($p['name']) ?></option>
+                                    <?php endforeach; ?>
+                                </optgroup>
+                                <optgroup label="FreeBSD OS">
+                                    <?php foreach ($os_online_presets['freebsd'] as $p): ?>
+                                        <option value="<?= htmlspecialchars(json_encode($p)) ?>"><?= htmlspecialchars($p['name']) ?></option>
+                                    <?php endforeach; ?>
+                                </optgroup>
+                                <optgroup label="Windows Drivers">
+                                    <?php foreach ($os_online_presets['windows'] as $p): ?>
+                                        <option value="<?= htmlspecialchars(json_encode($p)) ?>"><?= htmlspecialchars($p['name']) ?></option>
+                                    <?php endforeach; ?>
+                                </optgroup>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="font-weight-bold"><?= gettext("URL Download Langsung") ?></label>
+                            <input type="url" name="download_url" id="down_url" class="form-control" placeholder="https://..." required />
+                        </div>
+                        <div class="form-group">
+                            <label class="font-weight-bold"><?= gettext("Simpan Sebagai (Nama File)") ?></label>
+                            <input type="text" name="download_filename" id="down_file" class="form-control" placeholder="file.iso" />
+                        </div>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fa-solid fa-download"></i> <?= gettext("Mulai Unduh di Latar Belakang") ?>
+                        </button>
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- UNDUHAN AKTIF -->
+    <?php if (!empty($active_downloads)): ?>
+        <div class="panel panel-info">
+            <div class="panel-heading">
+                <h2 class="panel-title"><i class="fa-solid fa-spinner fa-spin"></i> <?= gettext("Proses Unduhan Sedang Berlangsung") ?></h2>
+            </div>
+            <div class="panel-body">
+                <table class="table table-striped table-hover">
+                    <thead>
+                        <tr>
+                            <th><?= gettext("Nama File Target") ?></th>
+                            <th><?= gettext("PID") ?></th>
+                            <th><?= gettext("Ukuran Saat Ini") ?></th>
+                            <th><?= gettext("Status Log Terakhir") ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($active_downloads as $dw): ?>
+                            <tr>
+                                <td><strong><?= htmlspecialchars($dw['filename']) ?></strong></td>
+                                <td><code><?= htmlspecialchars($dw['pid']) ?></code></td>
+                                <td><span class="label label-info"><?= htmlspecialchars($dw['current_size']) ?></span></td>
+                                <td><small style="font-family: monospace;"><?= nl2br(htmlspecialchars($dw['log'])) ?></small></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    <?php endif; ?>
+
+    <!-- TABEL IMAGE TERSIMPAN -->
+    <div class="panel panel-default">
+        <div class="panel-heading">
+            <h2 class="panel-title"><i class="fa-solid fa-folder-tree"></i> <?= gettext("Daftar Berkas Image / ISO di pfSense (/usr/local/vm/images/)") ?></h2>
+        </div>
+        <div class="panel-body">
+            <?php if (empty($available_images)): ?>
+                <div class="alert alert-warning">
+                    <i class="fa-solid fa-triangle-exclamation"></i> <?= gettext("Belum ada berkas ISO atau disk image yang diunggah/diunduh ke direktori penyimpanan.") ?>
+                </div>
+            <?php else: ?>
+                <div class="table-responsive">
+                    <table class="table table-striped table-hover">
+                        <thead>
+                            <tr>
+                                <th style="width: 40%;"><?= gettext("Nama Berkas") ?></th>
+                                <th style="width: 20%;"><?= gettext("Ukuran File") ?></th>
+                                <th style="width: 25%;"><?= gettext("Tanggal Modifikasi") ?></th>
+                                <th style="width: 15%; text-align: right;"><?= gettext("Aksi") ?></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($available_images as $im): ?>
+                                <tr>
+                                    <td>
+                                        <i class="fa-solid fa-compact-disc text-primary"></i>
+                                        <strong><?= htmlspecialchars($im['name']) ?></strong>
+                                        <div style="font-size: 11px; color: #888;"><?= htmlspecialchars($im['path']) ?></div>
+                                    </td>
+                                    <td><span class="badge" style="background-color: #337ab7;"><?= htmlspecialchars($im['size_human']) ?></span></td>
+                                    <td><?= htmlspecialchars($im['modified']) ?></td>
+                                    <td style="text-align: right;">
+                                        <form method="post" action="services_virtual.php" style="display: inline-block;" onsubmit="return confirm('Apakah Anda yakin ingin menghapus berkas image ini?');">
+                                            <input type="hidden" name="act" value="delete_image" />
+                                            <input type="hidden" name="image_filename" value="<?= htmlspecialchars($im['name']) ?>" />
+                                            <button type="submit" class="btn btn-xs btn-danger" title="<?= gettext('Hapus berkas ini') ?>">
+                                                <i class="fa-solid fa-trash"></i> <?= gettext("Hapus") ?>
+                                            </button>
+                                        </form>
+                                    </td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            <?php endif; ?>
+        </div>
+    </div>
+
 <?php elseif ($act == 'hypervisor'): ?>
     <!-- TAB HYPERVISOR STATUS -->
     <div class="panel panel-default">
@@ -563,6 +1038,9 @@ display_top_tabs($tab_array);
                     <a href="services_virtual.php?act=add" class="btn btn-success">
                         <i class="fa-solid fa-plus"></i> <?= gettext("Tambah Virtual Machine Baru") ?>
                     </a>
+                    <a href="services_virtual.php?act=images" class="btn btn-default" style="margin-left: 5px;">
+                        <i class="fa-solid fa-compact-disc text-primary"></i> <?= gettext("Kelola ISO / Images") ?>
+                    </a>
                     <form method="post" action="services_virtual.php" style="display: inline-block; margin-left: 5px;">
                         <input type="hidden" name="act" value="setup_hypervisor" />
                         <button type="submit" class="btn btn-primary" title="Muat modul kernel hypervisor">
@@ -583,7 +1061,7 @@ display_top_tabs($tab_array);
                         <tr>
                             <th style="width: 20%;"><?= gettext("Nama & Identitas") ?></th>
                             <th style="width: 15%;"><?= gettext("Alokasi Resource") ?></th>
-                            <th style="width: 20%;"><?= gettext("Konfigurasi Network") ?></th>
+                            <th style="width: 20%;"><?= gettext("Media & Network") ?></th>
                             <th style="width: 20%;"><?= gettext("Status Hypervisor") ?></th>
                             <th style="width: 25%; text-align: right;"><?= gettext("Aksi & Kontrol") ?></th>
                         </tr>
@@ -637,6 +1115,11 @@ display_top_tabs($tab_array);
                                             <span class="label label-default">Isolated / Host Only</span>
                                         <?php endif; ?>
                                     </div>
+                                    <?php if (!empty($vm['iso_path'])): ?>
+                                        <div style="font-size: 11px; margin-top: 3px; color: #555;">
+                                            <i class="fa-solid fa-compact-disc text-primary"></i> ISO: <code><?= htmlspecialchars(basename($vm['iso_path'])) ?></code>
+                                        </div>
+                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <?php if ($is_running): ?>
