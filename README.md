@@ -281,6 +281,116 @@ Jika Anda mengonfigurasi pfSense langsung dari shell atau skrip otomatis:
 
 ---
 
+### 🔀 Konfigurasi Routing & Outbound NAT dengan WireGuard di pfSense
+
+Setelah tunnel WireGuard aktif dan berhasil melakukan handshake, Anda dapat mengarahkan lalu lintas data klien LAN (**Policy-Based Routing**) serta mengonfigurasi **Outbound NAT (Masquerade)** agar klien di jaringan lokal pfSense dapat mengakses internet atau jaringan kantor pusat melalui VPS WireGuard.
+
+#### 1. Mengapa Perlu Assign Interface & Outbound NAT?
+- Secara default, paket WireGuard di pfSense berjalan sebagai grup antarmuka (`WireGuard`).
+- Untuk membuat Gateway pengarah rute (**Routing Gateway**) dan menerapkan aturan NAT khusus, antarmuka `tun_wg0` harus di-assign secara resmi ke dalam daftar interface pfSense (misalnya menjadi `WGVPN`).
+- **Outbound NAT** memastikan paket dari subnet LAN (misal `192.168.1.0/24`) diterjemahkan menjadi IP tunnel pfSense (`10.10.99.2`) saat melintasi tunnel, sehingga server tujuan tidak memerlukan routing balik ke subnet internal LAN Anda.
+
+---
+
+#### 2. Langkah-Langkah Setting di pfSense (WebGUI)
+
+##### Langkah A: Assign Interface WireGuard (`tun_wg0`)
+1. Buka menu **Interfaces > Assignments**.
+2. Pada baris paling bawah **Available network ports**, pilih `tun_wg0 (WireGuard Tunnel)` lalu klik tombol **+ Add**.
+3. Antarmuka baru bernama `OPT1` (atau nama berikutnya) akan muncul. Klik pada nama `OPT1` tersebut untuk mengedit:
+   - **Enable**: Centang `Enable interface`.
+   - **Description**: Ubah menjadi `WGVPN` (atau nama lain yang mudah dikenali).
+   - **IPv4 Configuration Type**: Pilih `Static IPv4`.
+   - **IPv4 Address**: Masukkan IP Client tunnel: `10.10.99.2` dengan prefix `/24`.
+   - Klik **Save** dan klik **Apply Changes**.
+
+##### Langkah B: Tambahkan Gateway WireGuard
+1. Buka menu **System > Routing > Gateways**.
+2. Klik tombol **+ Add**:
+   - **Disabled**: Jangan dicentang.
+   - **Interface**: Pilih `WGVPN`.
+   - **Address Family**: `IPv4`.
+   - **Name**: `WGVPN_GW`.
+   - **Gateway**: Masukkan IP tunnel server remote, yaitu `10.10.99.1`.
+   - **Monitor IP**: Masukkan `10.10.99.1` (untuk memantau latensi dan packet loss otomatis via dpinger).
+   - **Description**: `WireGuard VPS Gateway`.
+3. Klik **Save** dan klik **Apply Changes**.
+4. Cek status di menu **Status > Gateways**: Gateway `WGVPN_GW` harus berstatus **Online** dengan delay rendah (~16-19 ms) dan loss `0.0%`.
+
+##### Langkah C: Konfigurasi Outbound NAT (Hybrid Mode)
+1. Buka menu **Firewall > NAT > Outbound**.
+2. Ubah opsi mode dari *Automatic outbound NAT* menjadi **Hybrid Outbound NAT rule generation** (mode ini tetap mempertahankan NAT WAN default sembari mengizinkan penambahan rule manual).
+3. Klik **Save** di bagian atas (jangan lupa klik **Apply Changes** jika muncul).
+4. Di bagian tabel **Mappings**, klik tombol **Add** (ikon panah ke atas untuk menaruh rule di urutan pertama):
+   - **Interface**: Pilih `WGVPN`.
+   - **Address Family**: `IPv4`.
+   - **Protocol**: `any`.
+   - **Source**: Pilih Type `Network`, lalu isi subnet LAN Anda: `192.168.1.0` / `24` (atau pilih alias `LAN subnets`).
+   - **Destination**: `Any`.
+   - **Translation Address**: Pilih `Interface Address`.
+   - **Description**: `NAT Outbound LAN ke WireGuard VPS`.
+5. Klik **Save** dan klik tombol **Apply Changes**.
+
+##### Langkah D: Konfigurasi Routing (Pilih Skenario Anda)
+
+* **Skenario 1: Full Tunnel (Semua Internet Klien LAN Lewat WireGuard)**
+  1. Masuk ke **VPN > WireGuard > Peers** -> Edit peer VPS Server -> Pastikan **Allowed IPs** mencakup `0.0.0.0/0`.
+  2. Buka menu **Firewall > Rules > LAN**.
+  3. Edit rule default `Default allow LAN to any rule` (atau buat rule baru di atasnya untuk IP/klien tertentu):
+     - Scroll ke bawah dan klik tombol **Display Advanced**.
+     - Cari opsi **Gateway**: Ubah dari `default` menjadi **`WGVPN_GW - 10.10.99.1`**.
+     - Klik **Save** dan klik **Apply Changes**.
+  4. Seluruh trafik dari LAN sekarang akan diarahkan keluar melalui tunnel WireGuard menuju VPS.
+
+* **Skenario 2: Split Tunnel / Static Route (Hanya Subnet Kantor / Server Tertentu)**
+  1. Jika hanya ingin menghubungkan pfSense ke subnet spesifik di balik server VPS (misal `10.10.77.0/24` atau `192.168.88.0/24`):
+  2. Masuk ke **System > Routing > Static Routes**.
+  3. Klik tombol **+ Add**:
+     - **Destination network**: Masukkan subnet tujuan, misal `10.10.77.0` / `24`.
+     - **Gateway**: Pilih **`WGVPN_GW - 10.10.99.1`**.
+     - **Description**: `Route ke Subnet Remote via WireGuard`.
+  4. Klik **Save** dan klik **Apply Changes**.
+
+---
+
+#### 3. Konfigurasi Sisi Server (MikroTik / Linux VPS)
+Agar paket yang diteruskan dari pfSense dapat keluar ke internet dari VPS:
+
+* **Pada MikroTik CHR VPS**:
+  Pastikan ada rule masquerade pada interface internet (biasanya `ether1`):
+  ```routeros
+  /ip firewall nat add chain=srcnat out-interface=ether1 action=masquerade comment="Masquerade WireGuard pfSense"
+  ```
+* **Pada Linux VPS (Ubuntu/Debian)**:
+  Aktifkan IP forwarding dan iptables masquerade:
+  ```bash
+  sysctl -w net.ipv4.ip_forward=1
+  iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
+  ```
+
+---
+
+#### 4. Pengujian & Verifikasi Routing & NAT
+1. **Verifikasi Gateway di pfSense**:
+   Buka **Status > Gateways**: Pastikan `WGVPN_GW` berstatus `Online` dengan RTT ~16-19ms.
+2. **Verifikasi Aturan NAT Aktif**:
+   Buka shell pfSense dan jalankan:
+   ```sh
+   pfctl -sn | grep tun_wg0
+   ```
+   Output akan menunjukkan aturan NAT aktif:
+   ```text
+   nat on tun_wg0 inet from 192.168.1.0/24 to any -> 10.10.99.2 port 1024:65535
+   ```
+3. **Uji Jalur Rute (Traceroute) dari Komputer Klien**:
+   Jalankan traceroute ke alamat publik (contoh: `8.8.8.8`):
+   ```cmd
+   tracert -d 8.8.8.8
+   ```
+   Lompatan pertama adalah gateway LAN pfSense (`192.168.1.1`), dan lompatan berikutnya langsung ke IP tunnel WireGuard VPS (`10.10.99.1`).
+
+---
+
 ### 🔧 Tips & Penyelesaian Masalah (Troubleshooting)
 
 | Gejala | Penyebab Umum | Solusi |
