@@ -175,16 +175,7 @@ if (isset($_REQUEST['ajax']) && $_REQUEST['ajax'] == '1') {
     exit;
 }
 
-// Fetch authentic FreeBSD / pfSense system banner
-$freebsd_banner = "";
-if (file_exists("/etc/rc.banner")) {
-    $freebsd_banner .= shell_exec("/etc/rc.banner 2>&1") . "\n";
-}
-$uname_out = shell_exec("/usr/bin/uname -mrs 2>&1");
-if ($uname_out) {
-    $freebsd_banner .= trim($uname_out) . " (FreeBSD Console)\n";
-}
-$freebsd_banner .= "Type any FreeBSD shell command to execute.\n";
+
 
 $pgtitle = [gettext("Terminal"), gettext("System Console")];
 $pglinks = ["", "@self"];
@@ -490,7 +481,6 @@ body.sidebar-collapsed #pf-main-content {
 <script type="text/javascript">
 //<![CDATA[
 events.push(function() {
-    var FREEBSD_BANNER = <?=json_encode($freebsd_banner)?>;
     var currentCwd = '/root';
     var history = [];
     var historyIdx = -1;
@@ -543,7 +533,7 @@ events.push(function() {
     }
 
     function initConsole() {
-        $('#term-content').html(ansiToHtml(FREEBSD_BANNER));
+        $('#term-content').empty();
         currentCwd = '/root';
         updatePromptCwd();
         scrollToBottom();
