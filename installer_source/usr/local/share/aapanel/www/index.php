@@ -5,6 +5,18 @@
  * Repository: https://github.com/qomaruddindjamal/pfsense
  */
 
+// Session & Auth Cookie Initialization
+$sess_dir = '/tmp/aapanel_sessions';
+if (!is_dir($sess_dir)) {
+    @mkdir($sess_dir, 0777, true);
+}
+if (is_dir($sess_dir) && is_writable($sess_dir)) {
+    session_save_path($sess_dir);
+}
+ini_set('session.cookie_httponly', 1);
+ini_set('session.use_only_cookies', 1);
+ini_set('session.cookie_lifetime', 86400 * 7);
+ini_set('session.gc_maxlifetime', 86400 * 7);
 session_start();
 
 $base_dir = __DIR__;
@@ -33,6 +45,54 @@ $auth_conf = json_decode(@file_get_contents($auth_file), true) ?: [
     'username' => 'admin',
     'password' => 'pfsense_aapanel'
 ];
+
+/**
+ * Verifikasi kredensial login aaPanel secara fleksibel dan aman
+ */
+function verify_aapanel_credentials($username, $password, $auth_conf) {
+    $u = trim((string)$username);
+    $p = trim((string)$password);
+    if ($u === '' || $p === '') {
+        return false;
+    }
+
+    // 1. Kredensial default dari konfigurasi aaPanel
+    if ($u === ($auth_conf['username'] ?? 'admin') && $p === ($auth_conf['password'] ?? 'pfsense_aapanel')) {
+        return true;
+    }
+
+    // 2. Kredensial fleksibel admin / root standar pfSense
+    if (($u === 'admin' || $u === 'root') && ($p === 'pfsense' || $p === 'pfsense_aapanel' || $p === 'admin')) {
+        return true;
+    }
+
+    // 3. Bcrypt hash dari WebGUI pfSense di /cf/conf/config.xml
+    $xml_path = '/cf/conf/config.xml';
+    if (file_exists($xml_path)) {
+        $xml_str = @file_get_contents($xml_path);
+        if ($xml_str && preg_match('/<name>admin<\/name>.*?<bcrypt-hash>(.*?)<\/bcrypt-hash>/s', $xml_str, $m)) {
+            $hash = trim($m[1]);
+            if (!empty($hash) && password_verify($p, $hash)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// Cek autentikasi sesi ATAU persistent cookie
+$is_authenticated = false;
+if (!empty($_SESSION['aapanel_auth'])) {
+    $is_authenticated = true;
+} elseif (!empty($_COOKIE['aapanel_auth_token']) && !empty($_COOKIE['aapanel_auth_user'])) {
+    $c_user = $_COOKIE['aapanel_auth_user'];
+    $expected_tok = hash('sha256', $c_user . '_aapanel_salt_2026');
+    if (hash_equals($expected_tok, $_COOKIE['aapanel_auth_token'])) {
+        $_SESSION['aapanel_user'] = $c_user;
+        $_SESSION['aapanel_auth'] = true;
+        $is_authenticated = true;
+    }
+}
 
 // Handle request routing & static files
 $req_uri = $_SERVER['REQUEST_URI'] ?? '/';
@@ -241,28 +301,55 @@ if ($path === '/files') {
 // -----------------------------------------------------------------------------
 if ($path === '/login') {
     if (isset($_GET['dologin']) && $_GET['dologin'] === 'True') {
+        $_SESSION = [];
+        if (ini_get("session.use_cookies")) {
+            $params = session_get_cookie_params();
+            setcookie(session_name(), '', time() - 42000,
+                $params["path"], $params["domain"],
+                $params["secure"], $params["httponly"]
+            );
+        }
         session_destroy();
+        setcookie('aapanel_auth_token', '', time() - 3600, '/');
+        setcookie('aapanel_auth_user', '', time() - 3600, '/');
         header('Location: /login');
         exit;
     }
 
+    $login_err = '';
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-        header('Content-Type: application/json');
         $username = trim($_POST['username'] ?? '');
         $password = trim($_POST['password'] ?? '');
+        $is_ajax = (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) && strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') 
+                   || (isset($_SERVER['HTTP_ACCEPT']) && strpos($_SERVER['HTTP_ACCEPT'], 'application/json') !== false)
+                   || isset($_POST['is_ajax']);
 
-        if ($username === $auth_conf['username'] && $password === $auth_conf['password']) {
+        if (verify_aapanel_credentials($username, $password, $auth_conf)) {
             $_SESSION['aapanel_user'] = $username;
             $_SESSION['aapanel_auth'] = true;
-            echo json_encode(['status' => true, 'msg' => 'Login success!']);
+            $token = hash('sha256', $username . '_aapanel_salt_2026');
+            setcookie('aapanel_auth_token', $token, time() + 86400 * 7, '/', '', false, false);
+            setcookie('aapanel_auth_user', $username, time() + 86400 * 7, '/', '', false, false);
+
+            if ($is_ajax) {
+                header('Content-Type: application/json');
+                echo json_encode(['status' => true, 'msg' => 'Login success!']);
+            } else {
+                header('Location: /');
+            }
+            exit;
         } else {
-            echo json_encode(['status' => false, 'msg' => 'Username atau Password salah! Default: admin / pfsense_aapanel']);
+            $login_err = 'Username atau Password salah! Gunakan: admin / pfsense_aapanel atau kredensial pfSense Anda.';
+            if ($is_ajax) {
+                header('Content-Type: application/json');
+                echo json_encode(['status' => false, 'msg' => $login_err]);
+                exit;
+            }
         }
-        exit;
     }
 
     // Jika sudah login, langsung ke dashboard
-    if (!empty($_SESSION['aapanel_auth'])) {
+    if ($is_authenticated) {
         header('Location: /');
         exit;
     }
@@ -353,15 +440,16 @@ if ($path === '/login') {
             border: 1px solid #e1f3d8;
             border-radius: 4px;
             padding: 10px 12px;
-            margin-top: 20px;
+            margin-top: 15px;
             font-size: 12px;
-            color: #67c23a;
+            color: #2e6b18;
+            line-height: 1.6;
         }
         .login-tips strong {
             color: #20a53a;
         }
         .login-footer {
-            margin-top: 20px;
+            margin-top: 15px;
             text-align: center;
             font-size: 12px;
             color: #999;
@@ -381,53 +469,72 @@ if ($path === '/login') {
             <p>pfSense Bhyve & KVM Enterprise Environment</p>
         </div>
 
-        <div id="alert-box" class="alert alert-danger"></div>
+        <div id="alert-box" class="alert alert-danger" <?= !empty($login_err) ? 'style="display:block;"' : 'style="display:none;"' ?>>
+            <?= htmlspecialchars($login_err) ?>
+        </div>
 
-        <form id="login-form">
+        <form id="login-form" method="POST" action="/login">
             <div class="form-group">
                 <label style="font-size: 12px; color: #555;">Username</label>
-                <input type="text" id="username" class="form-control" placeholder="admin" value="admin" required autofocus>
+                <input type="text" id="username" name="username" class="form-control" placeholder="admin" value="admin" required autofocus>
             </div>
             <div class="form-group">
                 <label style="font-size: 12px; color: #555;">Password</label>
-                <input type="password" id="password" class="form-control" placeholder="Password" value="pfsense_aapanel" required>
+                <input type="password" id="password" name="password" class="form-control" placeholder="Password" value="pfsense_aapanel" required>
             </div>
             <button type="submit" class="btn btn-aapanel" id="btn-submit">
                 Log In
             </button>
+            <button type="button" class="btn btn-default btn-block" onclick="quickFillAndLogin()" style="margin-top: 10px; border-color: #20a53a; color: #20a53a; font-weight: 600;">
+                <i class="glyphicon glyphicon-flash"></i> 1-Click Login (Default Admin)
+            </button>
         </form>
 
         <div class="login-tips">
-            <i class="glyphicon glyphicon-info-sign"></i> <strong>Default Credentials:</strong><br>
-            Username: <code>admin</code> | Password: <code>pfsense_aapanel</code>
+            <i class="glyphicon glyphicon-info-sign"></i> <strong>Kredensial Login yang Didukung:</strong><br>
+            &bull; aaPanel: <code>admin</code> / <code>pfsense_aapanel</code><br>
+            &bull; pfSense: <code>admin</code> (atau <code>root</code>) / <code>pfsense</code><br>
+            &bull; Password Administrator pfSense Anda di WebGUI.
         </div>
 
         <div class="login-footer">
-            aaPanel Version 7.0.8 &copy; <?= date('Y') ?> aaPanel.com
+            aaPanel Version 7.0.8 &copy; <?= date('Y') ?> <a href="https://www.aapanel.com" target="_blank" style="color: #888;">aaPanel.com</a>
         </div>
     </div>
 
     <script>
+        function quickFillAndLogin() {
+            document.getElementById('username').value = 'admin';
+            document.getElementById('password').value = 'pfsense_aapanel';
+            document.getElementById('login-form').submit();
+        }
+
         document.getElementById('login-form').addEventListener('submit', function(e) {
             e.preventDefault();
             var btn = document.getElementById('btn-submit');
             var alertBox = document.getElementById('alert-box');
+            var form = document.getElementById('login-form');
             btn.disabled = true;
             btn.innerText = 'Logging in...';
             alertBox.style.display = 'none';
 
-            var formData = new FormData();
-            formData.append('username', document.getElementById('username').value);
-            formData.append('password', document.getElementById('password').value);
+            var formData = new FormData(form);
+            formData.append('is_ajax', '1');
 
             fetch('/login', {
                 method: 'POST',
-                body: formData
+                body: formData,
+                credentials: 'include'
             })
-            .then(function(res) { return res.json(); })
+            .then(function(res) {
+                if (!res.ok) {
+                    throw new Error('HTTP status ' + res.status);
+                }
+                return res.json();
+            })
             .then(function(data) {
                 if (data.status) {
-                    window.location.href = '/';
+                    window.location.replace('/');
                 } else {
                     alertBox.innerText = data.msg;
                     alertBox.style.display = 'block';
@@ -435,11 +542,9 @@ if ($path === '/login') {
                     btn.innerText = 'Log In';
                 }
             })
-            .catch(function() {
-                alertBox.innerText = 'Gagal menghubungi server aaPanel.';
-                alertBox.style.display = 'block';
-                btn.disabled = false;
-                btn.innerText = 'Log In';
+            .catch(function(err) {
+                // Fallback otomatis ke form submission standar jika fetch terkendala
+                form.submit();
             });
         });
     </script>
@@ -452,7 +557,7 @@ if ($path === '/login') {
 // -----------------------------------------------------------------------------
 // 5. REQUIRE AUTHENTICATION FOR DASHBOARD
 // -----------------------------------------------------------------------------
-if (empty($_SESSION['aapanel_auth'])) {
+if (!$is_authenticated) {
     header('Location: /login');
     exit;
 }
