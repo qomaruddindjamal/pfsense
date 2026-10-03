@@ -147,9 +147,9 @@ pfSense_install() {
 		done
 	fi
 
-	# 5. Ekstrak Paket Tambahan Offline (WireGuard, Xray-core, KVM)
-	echo "[5/6] Memasang Paket Tambahan Offline (WireGuard, Xray-core, KVM aaPanel)..."
-	for _custom in wireguard-pfsense.pkg xray-pfsense.pkg kvm.pkg pfSense-pkg-WireGuard-*.pkg; do
+	# 5. Ekstrak Paket Tambahan Offline (WireGuard, Xray-core, KVM, Wifi)
+	echo "[5/6] Memasang Paket Tambahan Offline (WireGuard, Xray-core, KVM aaPanel, Wifi)..."
+	for _custom in wireguard-pfsense.pkg xray-pfsense.pkg kvm.pkg wifi.pkg pfSense-pkg-WireGuard-*.pkg; do
 		for _dir in "${OFFLINE_PKG_DIR}" /pkg /usr/local/share/packages/offline; do
 			for _f in "${_dir}"/${_custom}; do
 				if [ -f "${_f}" ]; then
@@ -163,10 +163,10 @@ pfSense_install() {
 
 	# Pastikan file WebGUI dan XML deskriptor paket tambahan terpasang
 	/bin/mkdir -p "${_destdir}/usr/local/www" "${_destdir}/usr/local/pkg" "${_destdir}/usr/local/www/css"
-	for _p in /usr/local/www/vpn_wg.php /usr/local/www/vpn_xray.php /usr/local/www/services_virtual.php /usr/local/www/diag_terminal.php /usr/local/www/head.inc /usr/local/www/foot.inc; do
+	for _p in /usr/local/www/vpn_wg.php /usr/local/www/vpn_xray.php /usr/local/www/services_virtual.php /usr/local/www/diag_terminal.php /usr/local/www/interfaces_wifi.php /usr/local/www/head.inc /usr/local/www/foot.inc; do
 		[ -f "${_p}" ] && /bin/cp -f "${_p}" "${_destdir}/usr/local/www/" 2>/dev/null || true
 	done
-	for _x in /usr/local/pkg/wireguard.xml /usr/local/pkg/xray.xml /usr/local/pkg/virtual.xml /usr/local/pkg/terminal.xml; do
+	for _x in /usr/local/pkg/wireguard.xml /usr/local/pkg/xray.xml /usr/local/pkg/virtual.xml /usr/local/pkg/terminal.xml /usr/local/pkg/wifi.xml; do
 		[ -f "${_x}" ] && /bin/cp -f "${_x}" "${_destdir}/usr/local/pkg/" 2>/dev/null || true
 	done
 	[ -d /usr/local/www/css ] && /bin/cp -rf /usr/local/www/css/* "${_destdir}/usr/local/www/css/" 2>/dev/null || true
@@ -233,6 +233,18 @@ pfSense_install() {
 			print "\t\t\t<version>1.0.0</version>"
 			print "\t\t\t<configurationfile>terminal.xml</configurationfile>"
 			print "\t\t</package>"
+			print "\t\t<package>"
+			print "\t\t\t<name>wifi</name>"
+			print "\t\t\t<descr><![CDATA[Wireless Network & AP Manager]]></descr>"
+			print "\t\t\t<version>1.0.0</version>"
+			print "\t\t\t<configurationfile>wifi.xml</configurationfile>"
+			print "\t\t</package>"
+			print "\t\t<menu>"
+			print "\t\t\t<name>Wifi</name>"
+			print "\t\t\t<section>Wifi</section>"
+			print "\t\t\t<url>/interfaces_wifi.php</url>"
+			print "\t\t\t<tooltiptext>Configure Wireless Networks, Hardware Auto-detection, Client Station, Access Point, and VirtualBox Bridged Wi-Fi</tooltiptext>"
+			print "\t\t</menu>"
 			print "\t\t<menu>"
 			print "\t\t\t<name>WireGuard</name>"
 			print "\t\t\t<section>VPN</section>"
@@ -274,6 +286,12 @@ pfSense_install() {
 			print "\t\t\t<rcfile>virtual</rcfile>"
 			print "\t\t\t<executable>aapanel-pfsense</executable>"
 			print "\t\t\t<description><![CDATA[Virtual Machine and aaPanel Service]]></description>"
+			print "\t\t</service>"
+			print "\t\t<service>"
+			print "\t\t\t<name>wifi</name>"
+			print "\t\t\t<rcfile>wifi</rcfile>"
+			print "\t\t\t<executable>wifi-manager</executable>"
+			print "\t\t\t<description><![CDATA[Wireless Network & AP Manager]]></description>"
 			print "\t\t</service>"
 			print "\t</installedpackages>"
 		}

@@ -552,6 +552,7 @@ if (are_notices_pending()) {
 
 		$categories = [
 			['id' => 'system',      'name' => 'System',      'icon' => 'fa-solid fa-gears',          'menu' => $system_menu,      'href' => null],
+			['id' => 'wifi',        'name' => 'Wifi',        'icon' => 'fa-solid fa-wifi',           'url' => '/interfaces_wifi.php'],
 			['id' => 'interfaces',  'name' => 'Interfaces',  'icon' => 'fa-solid fa-network-wired',  'menu' => $interfaces_menu,  'href' => null],
 			['id' => 'wireguard',   'name' => 'WireGuard',   'icon' => null,                         'custom_icon' => $wg_custom_icon, 'url' => '/wg/vpn_wg_tunnels.php'],
 			['id' => 'firewall',    'name' => 'Firewall',    'icon' => 'fa-solid fa-shield-halved',  'menu' => $firewall_menu,    'href' => null],
@@ -577,6 +578,10 @@ if (are_notices_pending()) {
 			if ($is_home || $cat['id'] == 'help') {
 				// Pada index/home atau Help (link eksternal/dokumentasi), tidak boleh ada menu yang aktif
 				$is_active = false;
+				$menu_output = $has_sub ? output_menu($cat['menu'], $cat['href'], $cat['name']) : "";
+			} elseif ($current_page == 'interfaces_wifi.php') {
+				// Halaman Wifi khusus mengaktifkan menu tunggal Wifi
+				$is_active = ($cat['id'] == 'wifi');
 				$menu_output = $has_sub ? output_menu($cat['menu'], $cat['href'], $cat['name']) : "";
 			} elseif ($current_page == 'diag_terminal.php') {
 				// Halaman Terminal khusus mengaktifkan menu tunggal Terminal

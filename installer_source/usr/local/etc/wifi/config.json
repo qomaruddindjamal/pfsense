@@ -1,0 +1,32 @@
+{
+  "enabled": true,
+  "mode": "station",
+  "active_interface": "wlan0",
+  "parent_interface": "",
+  "virtual_mode": false,
+  "bridged_interface": "em1",
+  "station": {
+    "auto_connect": true,
+    "ssid": "",
+    "bssid": "",
+    "security": "WPA2-PSK",
+    "dhcp": true,
+    "ip": "",
+    "netmask": "255.255.255.0",
+    "gateway": "",
+    "dns": ["8.8.8.8", "1.1.1.1"]
+  },
+  "ap": {
+    "enabled": false,
+    "ssid": "pfSense-WiFi-AP",
+    "password": "pfsense_wifi_pass",
+    "channel": 6,
+    "standard": "11g",
+    "ip": "192.168.88.1",
+    "subnet": "255.255.255.0",
+    "dhcp_enabled": true,
+    "dhcp_start": "192.168.88.10",
+    "dhcp_end": "192.168.88.100"
+  },
+  "saved_networks": []
+}

@@ -1,0 +1,694 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+wifi-manager - Wireless Hardware Auto-detection, Client Station, Access Point,
+and VirtualBox Bridged Wi-Fi Manager for pfSense / FreeBSD.
+"""
+
+import sys
+import os
+import json
+import re
+import subprocess
+import time
+
+CONF_FILE = "/usr/local/etc/wifi/config.json"
+WPA_CONF_FILE = "/etc/wpa_supplicant_wlan0.conf"
+HOSTAPD_CONF_FILE = "/etc/hostapd_wlan0.conf"
+
+def run_cmd(cmd, check=False):
+    try:
+        res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        return res.returncode, res.stdout.strip(), res.stderr.strip()
+    except Exception as e:
+        return -1, "", str(e)
+
+def load_config():
+    if os.path.exists(CONF_FILE):
+        try:
+            with open(CONF_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "enabled": True,
+        "mode": "station",
+        "active_interface": "wlan0",
+        "parent_interface": "",
+        "virtual_mode": False,
+        "bridged_interface": "em1",
+        "station": {
+            "auto_connect": True,
+            "ssid": "",
+            "bssid": "",
+            "security": "WPA2-PSK",
+            "dhcp": true,
+            "ip": "",
+            "netmask": "255.255.255.0",
+            "gateway": "",
+            "dns": ["8.8.8.8", "1.1.1.1"]
+        },
+        "ap": {
+            "enabled": False,
+            "ssid": "pfSense-WiFi-AP",
+            "password": "pfsense_wifi_pass",
+            "channel": 6,
+            "standard": "11g",
+            "ip": "192.168.88.1",
+            "subnet": "255.255.255.0",
+            "dhcp_enabled": True,
+            "dhcp_start": "192.168.88.10",
+            "dhcp_end": "192.168.88.100"
+        },
+        "saved_networks": []
+    }
+
+def save_config(cfg):
+    os.makedirs(os.path.dirname(CONF_FILE), exist_ok=True)
+    with open(CONF_FILE, "w", encoding="utf-8") as f:
+        json.dump(cfg, f, indent=2)
+
+def detect_hardware():
+    """
+    Auto-detect physical wireless controllers (PCI, USB) and FreeBSD drivers.
+    Loads essential wlan kernel modules if missing.
+    """
+    res = {
+        "devices": [],
+        "wlan_parent_devices": [],
+        "virtual_wlan_interfaces": [],
+        "bridged_candidates": [],
+        "modules_loaded": [],
+        "is_vm": False,
+        "vm_type": "Native Hardware"
+    }
+
+    # Detect virtualization environment
+    _, vm_out, _ = run_cmd("sysctl -n kern.vm_guest 2>/dev/null")
+    if vm_out and vm_out.strip() != "none":
+        res["is_vm"] = True
+        res["vm_type"] = vm_out.strip()
+    else:
+        # Check dmesg or pciconf for VirtualBox / VMware / QEMU
+        _, pci_raw, _ = run_cmd("pciconf -lv 2>/dev/null")
+        if "VirtualBox" in pci_raw or "VBOX" in pci_raw:
+            res["is_vm"] = True
+            res["vm_type"] = "VirtualBox"
+        elif "VMware" in pci_raw:
+            res["is_vm"] = True
+            res["vm_type"] = "VMware"
+        elif "QEMU" in pci_raw or "bhyve" in pci_raw:
+            res["is_vm"] = True
+            res["vm_type"] = "KVM/QEMU"
+
+    # Core 802.11 modules to load
+    core_modules = ["wlan", "wlan_wep", "wlan_ccmp", "wlan_tkip", "wlan_amrr", "wlan_xauth", "wlan_rssadapt"]
+    for mod in core_modules:
+        run_cmd(f"kldload {mod} >/dev/null 2>&1")
+
+    # Common FreeBSD Wireless drivers to probe
+    wireless_drivers = [
+        "if_iwm",       # Intel Wireless 7000/8000/9000
+        "if_iwx",       # Intel Wi-Fi 6 AX200/AX201/AX210
+        "if_ath",       # Atheros AR5xxx/AR9xxx
+        "if_rtwn",      # Realtek RTL8188CE/EU
+        "if_rtwn_pci",  # Realtek PCI
+        "if_rtwn_usb",  # Realtek USB
+        "if_rtw88",     # Realtek 802.11ac
+        "if_ral",       # Ralink RT2500/RT2600/RT2860
+        "if_bwn",       # Broadcom BCM43xx
+        "if_run",       # Ralink USB RT2870/RT3070
+        "if_urtwn"      # Realtek USB RTL8188CU/EU
+    ]
+    for drv in wireless_drivers:
+        run_cmd(f"kldload {drv} >/dev/null 2>&1")
+
+    # Check which kernel modules are actually active
+    _, kld_out, _ = run_cmd("kldstat 2>/dev/null")
+    for line in kld_out.splitlines():
+        parts = line.strip().split()
+        if len(parts) >= 5:
+            mod_name = parts[4]
+            if "wlan" in mod_name or any(d in mod_name for d in wireless_drivers):
+                res["modules_loaded"].append(mod_name)
+
+    # Check sysctl net.wlan.devices (parent devices ready to create wlanX clones)
+    _, wlan_devs, _ = run_cmd("sysctl -n net.wlan.devices 2>/dev/null")
+    if wlan_devs:
+        for dev in wlan_devs.split():
+            dev = dev.strip()
+            if dev:
+                res["wlan_parent_devices"].append(dev)
+
+    # Scan pciconf -lv for network controllers
+    _, pci_out, _ = run_cmd("pciconf -lv 2>/dev/null")
+    blocks = pci_out.split("\n\n")
+    for blk in blocks:
+        is_net = False
+        dev_info = {}
+        for line in blk.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("class"):
+                if "network" in line.lower():
+                    is_net = True
+                dev_info["class"] = line
+            elif line.startswith("vendor"):
+                dev_info["vendor"] = line.split("=", 1)[1].strip(" '\"") if "=" in line else line
+            elif line.startswith("device"):
+                dev_info["device"] = line.split("=", 1)[1].strip(" '\"") if "=" in line else line
+            elif line.startswith("subvendor"):
+                dev_info["subvendor"] = line.split("=", 1)[1].strip(" '\"") if "=" in line else line
+            elif "@pci" in line:
+                dev_info["pci_id"] = line.split("@", 1)[0].strip()
+
+        if is_net:
+            v_lower = (dev_info.get("vendor", "") + " " + dev_info.get("device", "")).lower()
+            is_wifi = any(w in v_lower for w in ["wireless", "802.11", "wi-fi", "wifi", "centrino", "atheros", "realtek wireless", "intel wireless"])
+            dev_entry = {
+                "name": dev_info.get("pci_id", "pci_net"),
+                "vendor": dev_info.get("vendor", "Unknown"),
+                "model": dev_info.get("device", "Network Controller"),
+                "type": "Wireless (PCIe)" if is_wifi else "Ethernet (PCIe)",
+                "is_wireless": is_wifi,
+                "interface": dev_info.get("pci_id", "")
+            }
+            res["devices"].append(dev_entry)
+
+    # Scan usbconfig for USB Wi-Fi adapters
+    _, usb_out, _ = run_cmd("usbconfig dump_all_desc 2>/dev/null")
+    if not usb_out:
+        _, usb_out, _ = run_cmd("usbconfig 2>/dev/null")
+    if usb_out:
+        for line in usb_out.splitlines():
+            l_lower = line.lower()
+            if any(w in l_lower for w in ["802.11", "wireless", "wifi", "wlan", "ralink", "realtek"]):
+                res["devices"].append({
+                    "name": line.split(":", 1)[0].strip() if ":" in line else "usb",
+                    "vendor": "USB Device",
+                    "model": line.strip(),
+                    "type": "Wireless (USB)",
+                    "is_wireless": True,
+                    "interface": "usb"
+                })
+
+    # List all network interfaces from ifconfig -l
+    _, iface_list, _ = run_cmd("ifconfig -l 2>/dev/null")
+    if iface_list:
+        all_ifaces = iface_list.split()
+        for iface in all_ifaces:
+            if iface.startswith("wlan"):
+                res["virtual_wlan_interfaces"].append(iface)
+            elif not iface.startswith("lo") and not iface.startswith("enc") and not iface.startswith("pfsync") and not iface.startswith("pflog"):
+                # Candidate for bridged / virtual wifi (e.g. em1 in VirtualBox)
+                res["bridged_candidates"].append(iface)
+
+    # Auto-create wlan0 if parent device exists and no wlan0 created yet
+    if res["wlan_parent_devices"] and not res["virtual_wlan_interfaces"]:
+        parent = res["wlan_parent_devices"][0]
+        run_cmd(f"ifconfig wlan0 create wlandev {parent} wlanmode sta >/dev/null 2>&1")
+        res["virtual_wlan_interfaces"].append("wlan0")
+
+    # Persist detected driver modules into /boot/loader.conf
+    if os.path.exists("/boot/loader.conf"):
+        with open("/boot/loader.conf", "r", encoding="utf-8", errors="ignore") as f:
+            loader_txt = f.read()
+        needed_lines = []
+        for mod in ["wlan", "wlan_wep", "wlan_ccmp", "wlan_tkip"]:
+            line = f'{mod}_load="YES"'
+            if line not in loader_txt:
+                needed_lines.append(line)
+        if needed_lines:
+            with open("/boot/loader.conf", "a", encoding="utf-8") as f:
+                f.write("\n" + "\n".join(needed_lines) + "\n")
+
+    return res
+
+def scan_networks(interface="wlan0"):
+    """
+    Scans nearby 802.11 wireless networks using ifconfig wlanX up scan.
+    Returns JSON array of detected SSIDs, BSSID, Signal %, dBm, Channel, Security.
+    """
+    networks = []
+    
+    # Check if wlan interface exists
+    _, iflist, _ = run_cmd("ifconfig -l 2>/dev/null")
+    if interface not in (iflist or "").split():
+        # Attempt hardware detect to auto-create wlan0
+        hw = detect_hardware()
+        if hw["virtual_wlan_interfaces"]:
+            interface = hw["virtual_wlan_interfaces"][0]
+
+    # Bring up and trigger scan
+    run_cmd(f"ifconfig {interface} up scan >/dev/null 2>&1")
+    time.sleep(1.5)
+    _, scan_out, _ = run_cmd(f"ifconfig {interface} list scan 2>/dev/null")
+
+    lines = scan_out.splitlines()
+    if len(lines) > 1:
+        # Header format: SSID/MESH ID BSSID CHAN RATE S:N INT CAPS
+        for line in lines[1:]:
+            parts = line.strip().split()
+            if len(parts) >= 5:
+                # Find BSSID (format xx:xx:xx:xx:xx:xx)
+                bssid_idx = -1
+                for idx, p in enumerate(parts):
+                    if re.match(r"^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$", p):
+                        bssid_idx = idx
+                        break
+                
+                if bssid_idx > 0:
+                    ssid = " ".join(parts[:bssid_idx])
+                    bssid = parts[bssid_idx]
+                    chan = parts[bssid_idx + 1] if len(parts) > bssid_idx + 1 else "Auto"
+                    rate = parts[bssid_idx + 2] if len(parts) > bssid_idx + 2 else ""
+                    sn = parts[bssid_idx + 3] if len(parts) > bssid_idx + 3 else "25:0"
+                    caps = " ".join(parts[bssid_idx + 5:]) if len(parts) > bssid_idx + 5 else ""
+
+                    # Calculate signal percentage from SNR (e.g. 35:0)
+                    sig_val = 30
+                    if ":" in sn:
+                        try:
+                            sig_val = int(sn.split(":")[0])
+                        except ValueError:
+                            pass
+                    # Typically 0..50 SNR in FreeBSD
+                    sig_percent = min(100, max(10, int((sig_val / 50.0) * 100)))
+
+                    sec = "Open"
+                    if "RSN" in caps or "WPA2" in caps:
+                        sec = "WPA2-PSK"
+                    elif "WPA" in caps:
+                        sec = "WPA-PSK"
+                    elif "WEP" in caps or "PRIVACY" in caps:
+                        sec = "WEP"
+
+                    networks.append({
+                        "ssid": ssid if ssid else "<Hidden SSID>",
+                        "bssid": bssid,
+                        "channel": chan,
+                        "rate": rate,
+                        "signal_percent": sig_percent,
+                        "signal_dbm": -(100 - sig_percent),
+                        "security": sec,
+                        "caps": caps
+                    })
+
+    # Sort networks by signal strength descending
+    networks.sort(key=lambda x: x["signal_percent"], reverse=True)
+    return networks
+
+def connect_network(ssid, password="", security="WPA2-PSK", interface="wlan0"):
+    """
+    Connect to a wireless network via wpa_supplicant and dhclient.
+    """
+    if not ssid:
+        return {"status": False, "msg": "SSID cannot be empty!"}
+
+    # Ensure wlan0 exists
+    _, iflist, _ = run_cmd("ifconfig -l 2>/dev/null")
+    if interface not in (iflist or "").split():
+        hw = detect_hardware()
+        if hw["virtual_wlan_interfaces"]:
+            interface = hw["virtual_wlan_interfaces"][0]
+        else:
+            return {"status": False, "msg": "No wireless interface (wlan0) found. Please run Hardware Detect first."}
+
+    # Kill old wpa_supplicant instance for this interface
+    run_cmd(f"killall -9 wpa_supplicant >/dev/null 2>&1")
+    run_cmd(f"killall -9 dhclient >/dev/null 2>&1")
+
+    # Generate wpa_supplicant.conf
+    os.makedirs(os.path.dirname(WPA_CONF_FILE), exist_ok=True)
+    wpa_content = "ctrl_interface=/var/run/wpa_supplicant\nctrl_interface_group=wheel\n\n"
+    wpa_content += "network={\n"
+    wpa_content += f'    ssid="{ssid}"\n'
+    wpa_content += '    scan_ssid=1\n'
+    if password:
+        wpa_content += f'    psk="{password}"\n'
+        wpa_content += '    key_mgmt=WPA-PSK WPA-EAP SAE\n'
+    else:
+        wpa_content += '    key_mgmt=NONE\n'
+    wpa_content += "}\n"
+
+    with open(WPA_CONF_FILE, "w", encoding="utf-8") as f:
+        f.write(wpa_content)
+    os.chmod(WPA_CONF_FILE, 0o600)
+
+    # Bring up interface
+    run_cmd(f"ifconfig {interface} up")
+    time.sleep(1)
+
+    # Launch wpa_supplicant
+    wpa_cmd = f"wpa_supplicant -B -i {interface} -c {WPA_CONF_FILE}"
+    rc, out, err = run_cmd(wpa_cmd)
+    if rc != 0:
+        return {"status": False, "msg": f"Failed to start wpa_supplicant: {err}"}
+
+    # Wait up to 8 seconds for association
+    associated = False
+    for _ in range(8):
+        time.sleep(1)
+        _, st_out, _ = run_cmd(f"ifconfig {interface} 2>/dev/null")
+        if "status: associated" in st_out:
+            associated = True
+            break
+
+    # Request DHCP lease
+    run_cmd(f"dhclient {interface} >/dev/null 2>&1 &")
+    time.sleep(2)
+
+    # Save to config.json
+    cfg = load_config()
+    cfg["enabled"] = True
+    cfg["mode"] = "station"
+    cfg["active_interface"] = interface
+    cfg["station"]["ssid"] = ssid
+    cfg["station"]["security"] = security
+    
+    # Update saved networks list
+    found_saved = False
+    for net in cfg.get("saved_networks", []):
+        if net.get("ssid") == ssid:
+            net["password"] = password
+            net["security"] = security
+            net["last_connected"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            found_saved = True
+            break
+    if not found_saved:
+        cfg.setdefault("saved_networks", []).append({
+            "ssid": ssid,
+            "password": password,
+            "security": security,
+            "last_connected": time.strftime("%Y-%m-%d %H:%M:%S")
+        })
+    save_config(cfg)
+
+    return {
+        "status": True,
+        "associated": associated,
+        "msg": f"Successfully connected to '{ssid}' on {interface}!" if associated else f"Connection initiated to '{ssid}'. Associating..."
+    }
+
+def disconnect_network(interface="wlan0"):
+    """
+    Disconnects from active Wi-Fi and stops wpa_supplicant.
+    """
+    run_cmd("killall -9 wpa_supplicant >/dev/null 2>&1")
+    run_cmd(f"dhclient -r {interface} >/dev/null 2>&1")
+    run_cmd(f"ifconfig {interface} down >/dev/null 2>&1")
+    
+    cfg = load_config()
+    cfg["station"]["ssid"] = ""
+    save_config(cfg)
+    return {"status": True, "msg": f"Disconnected {interface} successfully."}
+
+def start_ap(ssid="pfSense-WiFi-AP", password="pfsense_wifi_pass", channel=6, standard="11g", ip="192.168.88.1"):
+    """
+    Starts 802.11 Access Point (HostAP) mode.
+    """
+    hw = detect_hardware()
+    parent = ""
+    if hw["wlan_parent_devices"]:
+        parent = hw["wlan_parent_devices"][0]
+    else:
+        return {"status": False, "msg": "No physical wireless parent device found for AP mode (e.g. ath0, iwm0)."}
+
+    # Destroy client wlan0 if exists and recreate as hostap
+    run_cmd("killall -9 wpa_supplicant hostapd >/dev/null 2>&1")
+    run_cmd("ifconfig wlan0 destroy >/dev/null 2>&1")
+    time.sleep(1)
+
+    rc, _, err = run_cmd(f"ifconfig wlan0 create wlandev {parent} wlanmode hostap")
+    if rc != 0:
+        return {"status": False, "msg": f"Failed to create HostAP interface on {parent}: {err}"}
+
+    # Generate hostapd.conf
+    os.makedirs(os.path.dirname(HOSTAPD_CONF_FILE), exist_ok=True)
+    h_conf = f"""interface=wlan0
+ctrl_interface=/var/run/hostapd
+ctrl_interface_group=wheel
+ssid={ssid}
+channel={channel}
+hw_mode=g
+ieee80211n=1
+wpa=2
+wpa_passphrase={password}
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=CCMP
+rsn_pairwise=CCMP
+"""
+    with open(HOSTAPD_CONF_FILE, "w", encoding="utf-8") as f:
+        f.write(h_conf)
+    os.chmod(HOSTAPD_CONF_FILE, 0o600)
+
+    # Assign Static IP and bring up
+    run_cmd(f"ifconfig wlan0 inet {ip} netmask 255.255.255.0 up")
+    time.sleep(1)
+
+    # Start hostapd
+    rc, _, err = run_cmd(f"hostapd -B {HOSTAPD_CONF_FILE}")
+    if rc != 0:
+        return {"status": False, "msg": f"Failed to start hostapd daemon: {err}"}
+
+    cfg = load_config()
+    cfg["mode"] = "ap"
+    cfg["ap"]["enabled"] = True
+    cfg["ap"]["ssid"] = ssid
+    cfg["ap"]["password"] = password
+    cfg["ap"]["channel"] = channel
+    cfg["ap"]["ip"] = ip
+    save_config(cfg)
+
+    return {"status": True, "msg": f"Access Point '{ssid}' started successfully on channel {channel} ({ip})!"}
+
+def stop_ap():
+    """
+    Stops Access Point (HostAP) mode.
+    """
+    run_cmd("killall -9 hostapd >/dev/null 2>&1")
+    run_cmd("ifconfig wlan0 down >/dev/null 2>&1")
+    cfg = load_config()
+    cfg["ap"]["enabled"] = False
+    cfg["mode"] = "station"
+    save_config(cfg)
+    return {"status": True, "msg": "Access Point stopped."}
+
+def setup_bridged_wifi(interface="em1"):
+    """
+    Setup bridged Wi-Fi mode for VirtualBox / VM testing where the host PC's
+    wireless card is bridged as a virtual Ethernet adapter.
+    """
+    if not interface:
+        return {"status": False, "msg": "Interface name required!"}
+
+    # Bring up interface
+    run_cmd(f"ifconfig {interface} up")
+    time.sleep(1)
+
+    # Request DHCP on the bridged interface
+    run_cmd(f"killall -9 dhclient >/dev/null 2>&1")
+    run_cmd(f"dhclient {interface} >/dev/null 2>&1 &")
+    time.sleep(2)
+
+    # Read current IP on bridged interface
+    _, if_out, _ = run_cmd(f"ifconfig {interface} 2>/dev/null")
+    ip_match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", if_out)
+    ip_addr = ip_match.group(1) if ip_match else "DHCP Requested..."
+
+    # Detect Gateway
+    _, gw_out, _ = run_cmd("netstat -rn -f inet 2>/dev/null | grep default")
+    gw = gw_out.split()[1] if gw_out else "Auto"
+
+    cfg = load_config()
+    cfg["virtual_mode"] = True
+    cfg["bridged_interface"] = interface
+    save_config(cfg)
+
+    return {
+        "status": True,
+        "interface": interface,
+        "ip": ip_addr,
+        "gateway": gw,
+        "msg": f"Bridged Virtual Wi-Fi activated on {interface}! IP: {ip_addr}, Gateway: {gw}"
+    }
+
+def get_status():
+    """
+    Returns full current status for WebGUI polling.
+    """
+    cfg = load_config()
+    hw = detect_hardware()
+    mode = cfg.get("mode", "station")
+    is_virtual = cfg.get("virtual_mode", False)
+    active_if = cfg.get("bridged_interface", "em1") if is_virtual else cfg.get("active_interface", "wlan0")
+
+    status = {
+        "mode": mode,
+        "is_virtual": is_virtual,
+        "active_interface": active_if,
+        "state": "Idle",
+        "ssid": "",
+        "bssid": "",
+        "channel": "",
+        "signal_percent": 0,
+        "signal_dbm": -100,
+        "ip": "",
+        "netmask": "",
+        "mac": "",
+        "gateway": "",
+        "hardware_detected": len(hw["devices"]),
+        "wlan_parents": hw["wlan_parent_devices"],
+        "virtual_interfaces": hw["virtual_wlan_interfaces"],
+        "bridged_candidates": hw["bridged_candidates"],
+        "is_vm": hw["is_vm"],
+        "vm_type": hw["vm_type"]
+    }
+
+    # Inspect interface with ifconfig
+    _, if_out, _ = run_cmd(f"ifconfig {active_if} 2>/dev/null")
+    if if_out:
+        # MAC address (ether xx:xx:xx:xx:xx:xx)
+        mac_m = re.search(r"ether (([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})", if_out)
+        if mac_m:
+            status["mac"] = mac_m.group(1)
+
+        # IP address (inet xxx.xxx.xxx.xxx)
+        ip_m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)\s+netmask\s+(0x[0-9a-fA-F]+|\d+\.\d+\.\d+\.\d+)", if_out)
+        if ip_m:
+            status["ip"] = ip_m.group(1)
+            status["netmask"] = ip_m.group(2)
+
+        if is_virtual:
+            status["state"] = "Bridged Wi-Fi Active" if status["ip"] else "Bridged (Waiting DHCP)"
+            status["ssid"] = "Host PC Wireless Card (Bridged)"
+            status["signal_percent"] = 100
+            status["signal_dbm"] = -30
+        else:
+            if "status: associated" in if_out:
+                status["state"] = "Connected"
+            elif "status: no carrier" in if_out:
+                status["state"] = "Disconnected"
+            elif "RUNNING" in if_out:
+                status["state"] = "Active"
+
+            # Parse SSID & BSSID
+            ssid_m = re.search(r'ssid "?([^"\n]+)"?', if_out)
+            if ssid_m:
+                status["ssid"] = ssid_m.group(1)
+
+            bssid_m = re.search(r"bssid (([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})", if_out)
+            if bssid_m:
+                status["bssid"] = bssid_m.group(1)
+
+            chan_m = re.search(r"channel (\d+)", if_out)
+            if chan_m:
+                status["channel"] = chan_m.group(1)
+
+    # Detect Gateway
+    _, gw_out, _ = run_cmd("netstat -rn -f inet 2>/dev/null | grep default")
+    if gw_out:
+        parts = gw_out.split()
+        if len(parts) >= 2:
+            status["gateway"] = parts[1]
+
+    return status
+
+def auto_start():
+    """
+    Invoked at boot by /usr/local/etc/rc.d/wifi.
+    Detects hardware, loads modules, auto-connects to saved network or starts AP.
+    """
+    print("[*] wifi-manager: Booting wireless subsystem...")
+    hw = detect_hardware()
+    cfg = load_config()
+
+    if not cfg.get("enabled", True):
+        print("[-] wifi-manager: Disabled in configuration.")
+        return
+
+    if cfg.get("virtual_mode", False):
+        br_if = cfg.get("bridged_interface", "em1")
+        print(f"[*] wifi-manager: Starting bridged Wi-Fi uplink on {br_if}...")
+        setup_bridged_wifi(br_if)
+    elif cfg.get("mode") == "ap" and cfg.get("ap", {}).get("enabled"):
+        ap = cfg.get("ap", {})
+        print(f"[*] wifi-manager: Starting AP mode '{ap.get('ssid')}'...")
+        start_ap(
+            ssid=ap.get("ssid", "pfSense-WiFi-AP"),
+            password=ap.get("password", "pfsense_wifi_pass"),
+            channel=ap.get("channel", 6),
+            ip=ap.get("ip", "192.168.88.1")
+        )
+    else:
+        st = cfg.get("station", {})
+        ssid = st.get("ssid")
+        if ssid:
+            print(f"[*] wifi-manager: Auto-connecting to saved network '{ssid}'...")
+            connect_network(ssid=ssid, password=st.get("password", ""), interface=cfg.get("active_interface", "wlan0"))
+        else:
+            print("[*] wifi-manager: Hardware probe complete. Wireless interface ready.")
+
+def main():
+    if len(sys.argv) < 2:
+        print("Usage: wifi-manager {detect|scan|connect|disconnect|ap-start|ap-stop|bridge-setup|status|auto-start} [args...]")
+        sys.exit(1)
+
+    cmd = sys.argv[1].lower()
+
+    if cmd == "detect":
+        data = detect_hardware()
+        print(json.dumps(data, indent=2))
+
+    elif cmd == "scan":
+        iface = sys.argv[2] if len(sys.argv) > 2 else "wlan0"
+        nets = scan_networks(iface)
+        print(json.dumps(nets, indent=2))
+
+    elif cmd == "connect":
+        if len(sys.argv) < 3:
+            print(json.dumps({"status": False, "msg": "Usage: wifi-manager connect <ssid> [password] [security] [interface]"}))
+            sys.exit(1)
+        ssid = sys.argv[2]
+        pwd = sys.argv[3] if len(sys.argv) > 3 else ""
+        sec = sys.argv[4] if len(sys.argv) > 4 else "WPA2-PSK"
+        iface = sys.argv[5] if len(sys.argv) > 5 else "wlan0"
+        res = connect_network(ssid, pwd, sec, iface)
+        print(json.dumps(res, indent=2))
+
+    elif cmd == "disconnect":
+        iface = sys.argv[2] if len(sys.argv) > 2 else "wlan0"
+        res = disconnect_network(iface)
+        print(json.dumps(res, indent=2))
+
+    elif cmd == "ap-start":
+        ssid = sys.argv[2] if len(sys.argv) > 2 else "pfSense-WiFi-AP"
+        pwd = sys.argv[3] if len(sys.argv) > 3 else "pfsense_wifi_pass"
+        chan = int(sys.argv[4]) if len(sys.argv) > 4 else 6
+        ip = sys.argv[5] if len(sys.argv) > 5 else "192.168.88.1"
+        res = start_ap(ssid, pwd, chan, ip=ip)
+        print(json.dumps(res, indent=2))
+
+    elif cmd == "ap-stop":
+        res = stop_ap()
+        print(json.dumps(res, indent=2))
+
+    elif cmd == "bridge-setup":
+        iface = sys.argv[2] if len(sys.argv) > 2 else "em1"
+        res = setup_bridged_wifi(iface)
+        print(json.dumps(res, indent=2))
+
+    elif cmd == "status":
+        st = get_status()
+        print(json.dumps(st, indent=2))
+
+    elif cmd == "auto-start":
+        auto_start()
+
+    else:
+        print(f"Unknown command: {cmd}")
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

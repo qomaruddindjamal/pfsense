@@ -381,8 +381,50 @@ echo "[✓] KVM & aaPanel default Virtual Machine package terpasang! Kelola di W
     )
     safe_rmtree(staging)
 
+def build_wifi():
+    print("=== Membangun wifi.pkg (Wireless Network & AP Manager) ===")
+    staging = BASE_DIR / "staging_wifi"
+    if staging.exists():
+        safe_rmtree(staging)
+    staging.mkdir(parents=True)
+
+    (staging / "usr/local/bin").mkdir(parents=True)
+    (staging / "usr/local/etc/rc.d").mkdir(parents=True)
+    (staging / "usr/local/etc/wifi").mkdir(parents=True)
+    (staging / "usr/local/pkg").mkdir(parents=True)
+    (staging / "usr/local/www").mkdir(parents=True)
+
+    # WebGUI & XML
+    shutil.copy2(PACKAGES_DIR / "wifi/usr/local/pkg/wifi.xml", staging / "usr/local/pkg/wifi.xml")
+    shutil.copy2(PACKAGES_DIR / "wifi/usr/local/www/interfaces_wifi.php", staging / "usr/local/www/interfaces_wifi.php")
+
+    # wifi-manager CLI & rc.d
+    shutil.copy2(PACKAGES_DIR / "wifi/usr/local/bin/wifi-manager", staging / "usr/local/bin/wifi-manager")
+    shutil.copy2(PACKAGES_DIR / "wifi/usr/local/etc/rc.d/wifi", staging / "usr/local/etc/rc.d/wifi")
+    shutil.copy2(PACKAGES_DIR / "wifi/usr/local/etc/wifi/config.json", staging / "usr/local/etc/wifi/config.json")
+
+    post_install = """#!/bin/sh
+chmod 755 /usr/local/bin/wifi-manager /usr/local/etc/rc.d/wifi
+/usr/local/bin/wifi-manager detect >/dev/null 2>&1 || true
+if ! grep -q 'wifi_enable="YES"' /etc/rc.conf.local 2>/dev/null; then
+    echo 'wifi_enable="YES"' >> /etc/rc.conf.local
+fi
+echo "[✓] Paket Wifi Wireless Network & AP Manager terpasang! Kelola di WebGUI: Menu Wifi"
+"""
+    create_pkg(
+        pkg_name="wifi",
+        version="1.0.0",
+        comment="Wireless Network & AP Manager with Native Hardware Auto-detection for pfSense",
+        desc="Paket manajemen jaringan nirkabel (Wi-Fi), auto-deteksi driver FreeBSD, mode Client Station, Hotspot AP, dan VirtualBox Bridged Wi-Fi.",
+        root_staging_dir=staging,
+        post_install_script=post_install
+    )
+    safe_rmtree(staging)
+
 if __name__ == "__main__":
     build_wireguard()
     build_xray()
     build_kvm()
+    build_wifi()
     print("[*] Selesai membangun seluruh paket .pkg!")
+
