@@ -399,6 +399,10 @@ if (count($wifdescrs) > 0) {
 
 $status_menu = msort(array_merge($status_menu, return_ext_menu("Status")), 0);
 
+// Tools
+$tools_menu = array();
+$tools_menu[] = array(gettext("Speedtest"), "/tools_speedtest.php");
+
 // Diagnostics
 $diagnostics_menu = array();
 $diagnostics_menu[] = array(gettext("ARP Table"), "/diag_arp.php");
@@ -561,6 +565,7 @@ if (are_notices_pending()) {
 			['id' => 'kvm',         'name' => 'KVM',         'icon' => 'fa-solid fa-server',         'url' => '/services_virtual.php'],
 			['id' => 'diagnostics', 'name' => 'Diagnostics', 'icon' => 'fa-solid fa-toolbox',        'menu' => $diagnostics_menu, 'href' => null],
 			['id' => 'terminal',    'name' => 'Terminal',    'icon' => 'fa-solid fa-terminal',       'url' => '/diag_terminal.php'],
+			['id' => 'tools',       'name' => 'Tools',       'icon' => 'fa-solid fa-screwdriver-wrench', 'menu' => $tools_menu, 'href' => null],
 			['id' => 'status',      'name' => 'Status',      'icon' => 'fa-solid fa-chart-line',     'menu' => $status_menu,      'href' => null],
 			['id' => 'help',        'name' => $help_menu_title, 'icon' => 'fa-solid fa-circle-question','menu' => $help_menu,    'href' => '_blank']
 		];

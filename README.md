@@ -84,12 +84,16 @@ pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages
 
 # 3. Pasang Mesin Virtual + aaPanel (.pkg)
 pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/kvm.pkg
+
+# 4. Pasang Speedtest Tool (.pkg) (Ookla Native + GitHub CLI)
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/speedtest.pkg
 ```
 
 Setelah paket terpasang, gunakan CLI bawaan masing-masing:
 - **WireGuard**: `wireguard-manager {start|stop|restart|status|genkey}`
 - **Xray-core**: `xray-control {start|stop|restart|status|test|version}` atau `service xray start`
 - **Mesin Virtual / aaPanel**: `aapanel-pfsense {setup-bhyve|install-linux|status}`
+- **Speedtest**: `speedtest` atau akses WebGUI pada menu **Tools > Speedtest**
 
 ---
 

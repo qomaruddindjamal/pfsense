@@ -147,9 +147,9 @@ pfSense_install() {
 		done
 	fi
 
-	# 5. Ekstrak Paket Tambahan Offline (WireGuard, Xray-core, KVM, Wifi)
-	echo "[5/6] Memasang Paket Tambahan Offline (WireGuard, Xray-core, KVM aaPanel, Wifi)..."
-	for _custom in wireguard-pfsense.pkg xray-pfsense.pkg kvm.pkg wifi.pkg pfSense-pkg-WireGuard-*.pkg; do
+	# 5. Ekstrak Paket Tambahan Offline (WireGuard, Xray-core, KVM, Wifi, Speedtest)
+	echo "[5/6] Memasang Paket Tambahan Offline (WireGuard, Xray-core, KVM aaPanel, Wifi, Speedtest)..."
+	for _custom in wireguard-pfsense.pkg xray-pfsense.pkg kvm.pkg wifi.pkg speedtest.pkg pfSense-pkg-WireGuard-*.pkg; do
 		for _dir in "${OFFLINE_PKG_DIR}" /pkg /usr/local/share/packages/offline; do
 			for _f in "${_dir}"/${_custom}; do
 				if [ -f "${_f}" ]; then
@@ -162,11 +162,19 @@ pfSense_install() {
 	done
 
 	# Pastikan file WebGUI dan XML deskriptor paket tambahan terpasang
-	/bin/mkdir -p "${_destdir}/usr/local/www" "${_destdir}/usr/local/pkg" "${_destdir}/usr/local/www/css"
-	for _p in /usr/local/www/vpn_wg.php /usr/local/www/vpn_xray.php /usr/local/www/services_virtual.php /usr/local/www/diag_terminal.php /usr/local/www/interfaces_wifi.php /usr/local/www/head.inc /usr/local/www/foot.inc; do
+	/bin/mkdir -p "${_destdir}/usr/local/www" "${_destdir}/usr/local/pkg" "${_destdir}/usr/local/www/css" "${_destdir}/usr/local/www/widgets/widgets" "${_destdir}/usr/local/bin"
+	for _p in /usr/local/www/vpn_wg.php /usr/local/www/vpn_xray.php /usr/local/www/services_virtual.php /usr/local/www/diag_terminal.php /usr/local/www/interfaces_wifi.php /usr/local/www/tools_speedtest.php /usr/local/www/head.inc /usr/local/www/foot.inc; do
 		[ -f "${_p}" ] && /bin/cp -f "${_p}" "${_destdir}/usr/local/www/" 2>/dev/null || true
 	done
-	for _x in /usr/local/pkg/wireguard.xml /usr/local/pkg/xray.xml /usr/local/pkg/virtual.xml /usr/local/pkg/terminal.xml /usr/local/pkg/wifi.xml; do
+	[ -f /usr/local/www/widgets/widgets/speedtest.widget.php ] && /bin/cp -f /usr/local/www/widgets/widgets/speedtest.widget.php "${_destdir}/usr/local/www/widgets/widgets/" 2>/dev/null || true
+	for _b in /usr/local/bin/speedtest /usr/local/bin/speedtest-cli; do
+		[ -f "${_b}" ] && /bin/cp -f "${_b}" "${_destdir}/usr/local/bin/" 2>/dev/null || true
+	done
+	chmod 755 "${_destdir}/usr/local/bin/speedtest" "${_destdir}/usr/local/bin/speedtest-cli" 2>/dev/null || true
+	if [ ! -f "${_destdir}/usr/local/bin/python" ] && [ -f "${_destdir}/usr/local/bin/python3" ]; then
+		ln -s "${_destdir}/usr/local/bin/python3" "${_destdir}/usr/local/bin/python" 2>/dev/null || true
+	fi
+	for _x in /usr/local/pkg/wireguard.xml /usr/local/pkg/xray.xml /usr/local/pkg/virtual.xml /usr/local/pkg/terminal.xml /usr/local/pkg/wifi.xml /usr/local/pkg/speedtest.xml; do
 		[ -f "${_x}" ] && /bin/cp -f "${_x}" "${_destdir}/usr/local/pkg/" 2>/dev/null || true
 	done
 	[ -d /usr/local/www/css ] && /bin/cp -rf /usr/local/www/css/* "${_destdir}/usr/local/www/css/" 2>/dev/null || true
@@ -239,11 +247,23 @@ pfSense_install() {
 			print "\t\t\t<version>1.0.0</version>"
 			print "\t\t\t<configurationfile>wifi.xml</configurationfile>"
 			print "\t\t</package>"
+			print "\t\t<package>"
+			print "\t\t\t<name>speedtest</name>"
+			print "\t\t\t<descr><![CDATA[Internet Bandwidth & Latency Speedtest Tool]]></descr>"
+			print "\t\t\t<version>1.0.0</version>"
+			print "\t\t\t<configurationfile>speedtest.xml</configurationfile>"
+			print "\t\t</package>"
 			print "\t\t<menu>"
 			print "\t\t\t<name>Wifi</name>"
 			print "\t\t\t<section>Wifi</section>"
 			print "\t\t\t<url>/interfaces_wifi.php</url>"
 			print "\t\t\t<tooltiptext>Configure Wireless Networks, Hardware Auto-detection, Client Station, Access Point, and VirtualBox Bridged Wi-Fi</tooltiptext>"
+			print "\t\t</menu>"
+			print "\t\t<menu>"
+			print "\t\t\t<name>Speedtest</name>"
+			print "\t\t\t<section>Tools</section>"
+			print "\t\t\t<url>/tools_speedtest.php</url>"
+			print "\t\t\t<tooltiptext>Test network bandwidth, latency, jitter, and Outbound NAT throughput</tooltiptext>"
 			print "\t\t</menu>"
 			print "\t\t<menu>"
 			print "\t\t\t<name>WireGuard</name>"

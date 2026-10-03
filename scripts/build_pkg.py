@@ -421,10 +421,61 @@ echo "[✓] Paket Wifi Wireless Network & AP Manager terpasang! Kelola di WebGUI
     )
     safe_rmtree(staging)
 
+def build_speedtest():
+    print("=== Membangun speedtest.pkg (Bandwidth & Latency Measurement) ===")
+    staging = BASE_DIR / "staging_speedtest"
+    if staging.exists():
+        safe_rmtree(staging)
+    staging.mkdir(parents=True)
+
+    (staging / "usr/local/bin").mkdir(parents=True)
+    (staging / "usr/local/pkg").mkdir(parents=True)
+    (staging / "usr/local/www").mkdir(parents=True)
+    (staging / "usr/local/www/widgets/widgets").mkdir(parents=True)
+
+    # 1. Binaries
+    src_ookla = PACKAGES_DIR / "speedtest/usr/local/bin/speedtest"
+    src_sivel = PACKAGES_DIR / "speedtest/usr/local/bin/speedtest-cli"
+    if src_ookla.exists():
+        shutil.copy2(src_ookla, staging / "usr/local/bin/speedtest")
+    if src_sivel.exists():
+        shutil.copy2(src_sivel, staging / "usr/local/bin/speedtest-cli")
+
+    # 2. WebGUI & Widget
+    src_gui = PACKAGES_DIR / "speedtest/usr/local/www/tools_speedtest.php"
+    src_widget = PACKAGES_DIR / "speedtest/usr/local/www/widgets/widgets/speedtest.widget.php"
+    src_xml = PACKAGES_DIR / "speedtest/usr/local/pkg/speedtest.xml"
+    if src_gui.exists():
+        shutil.copy2(src_gui, staging / "usr/local/www/tools_speedtest.php")
+    if src_widget.exists():
+        shutil.copy2(src_widget, staging / "usr/local/www/widgets/widgets/speedtest.widget.php")
+    if src_xml.exists():
+        shutil.copy2(src_xml, staging / "usr/local/pkg/speedtest.xml")
+
+    post_install = """#!/bin/sh
+chmod 755 /usr/local/bin/speedtest /usr/local/bin/speedtest-cli
+# Pastikan symlink python -> python3 tersedia untuk speedtest-cli
+if [ ! -f /usr/local/bin/python ] && [ -f /usr/local/bin/python3 ]; then
+    ln -s /usr/local/bin/python3 /usr/local/bin/python
+fi
+echo "[✓] Paket Speedtest (Ookla Native & GitHub CLI) terpasang! Akses di WebGUI: Tools > Speedtest"
+"""
+    create_pkg(
+        pkg_name="speedtest",
+        version="1.0.0",
+        comment="Internet Bandwidth & Latency Speedtest Tool (Ookla Native & GitHub CLI) for pfSense",
+        desc="Paket pengujian kecepatan internet lengkap untuk pfSense dengan engine resmi Ookla CLI 64-bit multi-stream dan Python speedtest-cli dari GitHub, mendukung pengujian per-interface termasuk Outbound NAT LAN dan Tunnel VPN.",
+        root_staging_dir=staging,
+        post_install_script=post_install
+    )
+    safe_rmtree(staging)
+
 if __name__ == "__main__":
     build_wireguard()
     build_xray()
     build_kvm()
     build_wifi()
+    build_speedtest()
     print("[*] Selesai membangun seluruh paket .pkg!")
+
 

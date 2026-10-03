@@ -10,6 +10,9 @@ Direktori ini berisi paket biner resmi berformat **`.pkg`** (FreeBSD pkg-ng stan
 3. **`kvm.pkg`**:
    - Berisi mesin virtual KVM / bhyve & container Linux yang di dalamnya sudah terpasang sistem **aaPanel**, utilitas manajemen `aapanel-pfsense`, konfigurasi Virtual-Ethernet (`tap0`/`bridge0`), serta service autostart saat pfSense boot.
 
+5. **`speedtest.pkg`**:
+   - Berisi Ookla Official CLI 64-bit (`speedtest`), Python `speedtest-cli` dari GitHub, halaman WebGUI Speedtest (`tools_speedtest.php`), Dashboard Widget (`speedtest.widget.php`), serta integrasi menu **Tools > Speedtest**.
+
 ---
 
 ## Cara Instalasi di pfSense
@@ -26,6 +29,9 @@ pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages
 
 # Instal Mesin Virtual + aaPanel (.pkg)
 pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/kvm.pkg
+
+# Instal Speedtest (.pkg)
+pkg add https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main/packages/pkg/speedtest.pkg
 ```
 
 ### 2. Instalasi dari File Lokal (.pkg)
@@ -35,6 +41,7 @@ Jika Anda sudah menyalin file `.pkg` ke sistem pfSense:
 pkg add wireguard-pfsense.pkg
 pkg add xray-pfsense.pkg
 pkg add kvm.pkg
+pkg add speedtest.pkg
 ```
 
 ---
@@ -63,3 +70,15 @@ xray-control version       # Cek versi Xray
 aapanel-pfsense setup-bhyve # Memuat modul virtualisasi FreeBSD bhyve di pfSense
 aapanel-pfsense status      # Cek status modul hypervisor
 ```
+
+### Speedtest
+```sh
+# Jalankan pengujian kecepatan Ookla via CLI
+speedtest
+
+# Jalankan pengujian via interface tertentu (misal LAN 192.168.1.1 untuk uji Outbound NAT)
+speedtest -i 192.168.1.1
+
+# Atau gunakan WebGUI di menu: Tools > Speedtest
+```
+
