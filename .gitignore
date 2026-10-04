@@ -1,6 +1,7 @@
 # Disk & ISO Images (Keep repository light and below GitHub 100MB limit)
 *.iso
 *.img
+!installer_source/boot/efi.img
 *.img.gz
 *.raw
 *.raw.gz
