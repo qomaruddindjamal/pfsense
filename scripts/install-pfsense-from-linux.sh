@@ -83,8 +83,8 @@ echo -e "${RED}SEMUA DATA DI LINUX SAAT INI AKAN DIHAPUS DAN DIGANTI DENGAN PFSE
 echo -e "${RED}======================================================================${NC}"
 
 # Pilihan URL Image
-# Menggunakan pfSense CE Serial/VGA Disk Image atau custom preinstalled raw image
-DEFAULT_IMG_URL="https://nyifiles.netgate.com/mirror/downloads/pfSense-CE-memstick-serial-2.7.2-RELEASE-amd64.img.gz"
+# Menggunakan Custom Offline Installer pfSense img.gz dari rilis GitHub repository ini
+DEFAULT_IMG_URL="https://github.com/qomaruddindjamal/pfsense/releases/download/pfSense/pfsense-offline-installer.img.gz"
 IMG_URL="${1:-$DEFAULT_IMG_URL}"
 
 echo -e "${YELLOW}URL Image pfSense yang akan digunakan:${NC} ${IMG_URL}"

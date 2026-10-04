@@ -4,14 +4,15 @@
 
 <p align="center">
   <a href="#readme"><img src="https://img.shields.io/badge/%F0%9F%93%96%20README-Overview-0969da?style=for-the-badge" alt="README"></a>&nbsp;
+  <a href="#codespaces"><img src="https://img.shields.io/badge/%E2%98%81%EF%B8%8F%20Codespaces-QEMU%20KVM-1f6feb?style=for-the-badge" alt="Codespaces"></a>&nbsp;
   <a href="#wireguard"><img src="https://img.shields.io/badge/%F0%9F%9B%A1%EF%B8%8F%20WireGuard-Client%20%26%20Server-2ea44f?style=for-the-badge" alt="WireGuard"></a>&nbsp;
   <a href="#xray"><img src="https://img.shields.io/badge/%E2%9A%A1%20Xray--core-Multi--Protocol-8957e5?style=for-the-badge" alt="Xray-core"></a>&nbsp;
   <a href="#aapanel"><img src="https://img.shields.io/badge/%F0%9F%8C%90%20aaPanel-Bhyve%20KVM-f59e0b?style=for-the-badge" alt="aaPanel"></a>&nbsp;
   <a href="LICENSE"><img src="https://img.shields.io/badge/%E2%9A%96%EF%B8%8F%20License-Apache--2.0-57606a?style=for-the-badge" alt="License"></a>
 </p>
 
-| [📖 **README**](#readme) | [🛡️ **WireGuard**](#wireguard) | [⚡ **Xray-core**](#xray) | [🌐 **aaPanel**](#aapanel) | [⚖️ **Apache-2.0 License**](LICENSE) |
-| :---: | :---: | :---: | :---: | :---: |
+| [📖 **README**](#readme) | [☁️ **Codespaces**](#codespaces) | [🛡️ **WireGuard**](#wireguard) | [⚡ **Xray-core**](#xray) | [🌐 **aaPanel**](#aapanel) | [⚖️ **Apache-2.0 License**](LICENSE) |
+| :---: | :---: | :---: | :---: | :---: | :---: |
 
 ---
 
@@ -74,7 +75,82 @@ bash <(curl -sSL https://raw.githubusercontent.com/qomaruddindjamal/pfsense/main
 
 ---
 
-## 📦 2. Pemasangan Paket Berformat `.pkg` di pfSense (Rekomendasi Cepat)
+<a id="codespaces"></a>
+
+## ☁️ 2. Menjalankan & Menginstal pfSense di GitHub Codespaces
+
+Anda dapat menjalankan pfSense langsung di dalam **GitHub Codespaces** menggunakan mesin virtual **QEMU / KVM** lengkap dengan antarmuka grafis berbasis web (**noVNC**) dan akses penuh ke **pfSense webConfigurator** tanpa memerlukan komputer lokal berspesifikasi tinggi.
+
+### 🌟 Keunggulan di GitHub Codespaces:
+- **Akselerasi Hardware KVM**: Codespaces mendukung virtualisasi `/dev/kvm` secara langsung dengan prosesor AMD EPYC / Intel Xeon 2 vCPU dan RAM 8GB.
+- **Port Forwarding Otomatis & Aman**: Akses GUI dan konsol dapat dibuka langsung via browser menggunakan domain resmi HTTPS GitHub (`*.app.github.dev`).
+- **Instalasi Mandiri & Otomatis**: Dilengkapi dengan skrip manajemen `scripts/pfsense-codespaces.sh` dan modul instalasi cepat `pfSense-install`.
+
+---
+
+### 🚀 Cara Menjalankan (Pilih Salah Satu Metode):
+
+#### ⚡ Opsi 1: Paling Cepat & Instan (Menggunakan Rilis `img.gz` ~30 Detik)
+Mengunduh citra resmi pfSense terkompresi dari [GitHub Releases](https://github.com/qomaruddindjamal/pfsense/releases/tag/pfSense) langsung ke virtual disk:
+```bash
+# 1. Unduh dan konversi citra rilis otomatis
+bash scripts/pfsense-codespaces.sh setup-image
+
+# 2. Jalankan pfSense langsung dari disk
+bash scripts/pfsense-codespaces.sh start
+```
+
+---
+
+#### 🛠️ Opsi 2: Kustom ISO & Otomatisasi `pfSense-install` (~1,5 Menit)
+Membangun file ISO langsung dari pohon kode sumber `installer_source` dan mengeksekusi installer otomatis:
+```bash
+# 1. Siapkan dependensi, virtual disk, dan bangun ISO lokal
+bash scripts/pfsense-codespaces.sh setup
+
+# 2. Jalankan VM dalam Mode Installer (Boot dari ISO)
+bash scripts/pfsense-codespaces.sh install
+```
+
+> **Catatan Otomatisasi `pfSense-install`:**
+> - Installer secara instan mendeteksi disk virtual VirtIO (`/dev/vtbd0`), memformat ZFS pool, memasang kernel, konfigurasi default, dan menyisipkan seluruh 5 paket kustom offline (`wireguard`, `xray`, `speedtest`, `wifi`, `kvm`).
+> - Setelah instalasi selesai dan VM otomatis reboot, jalankan perintah operasional:
+>   ```bash
+>   bash scripts/pfsense-codespaces.sh start
+>   ```
+
+---
+
+### 🌐 Akses Layanan di Browser (GitHub Codespaces Port Forwarding)
+
+Skrip otomatis telah dilengkapi dengan **Nginx Reverse Proxy** di port `8443` & `8080` untuk menjembatani protokol HTTP Codespaces ke HTTPS pfSense dan menginjeksi header `Host: localhost`, sehingga **bebas dari error `400 Bad Request` maupun `DNS Rebind Attack`**.
+
+| Layanan | Port Internal | Port Codespaces | Tautan Akses Browser | Keterangan |
+| :--- | :---: | :---: | :--- | :--- |
+| **🌐 pfSense WebGUI** | `443` (HTTPS) | **`8443`** | `https://<codespace-name>-8443.app.github.dev/` | Dashboard manajemen utama pfSense |
+| **📺 noVNC Web Console** | `5900` (VNC) | **`6080`** | `https://<codespace-name>-6080.app.github.dev/vnc.html` | Layar visual monitor VM interaktif |
+| **🌐 Web HTTP (Redirect)**| `80` (HTTP) | **`8080`** | `https://<codespace-name>-8080.app.github.dev/` | Port 80 HTTP pfSense |
+| **🔑 SSH pfSense** | `22` (SSH) | **`22222`** | `ssh -p 22222 admin@localhost` | Port SSH *(admin / pfsense)* |
+
+> **Login Default pfSense:**
+> - **Username**: `admin`
+> - **Password**: `pfsense`
+> - **IP WAN (NAT Forwarding)**: `10.0.2.15/24` (Port 8443 / 8080 / 22222)
+> - **IP LAN (Virtual Subnet)**: `192.168.1.1/24`
+
+---
+
+### 🛠️ Perintah Tambahan `pfsense-codespaces.sh`:
+```bash
+bash scripts/pfsense-codespaces.sh status      # Cek status VM, server noVNC, dan URL
+bash scripts/pfsense-codespaces.sh stop        # Hentikan VM dan noVNC
+bash scripts/pfsense-codespaces.sh restart     # Muat ulang VM dari disk
+bash scripts/pfsense-codespaces.sh screenshot  # Ambil screenshot konsol ke /tmp/pfsense_screenshot.png
+```
+
+---
+
+## 📦 3. Pemasangan Paket Berformat `.pkg` di pfSense (Rekomendasi Cepat)
 
 > **💡 Catatan Penting:** Jika Anda menginstal pfSense menggunakan media **Custom Offline Installer (.iso / .img)** dari repository ini, seluruh paket di bawah ini **sudah otomatis terpasang secara offline**.
 
@@ -106,7 +182,7 @@ Setelah paket terpasang, gunakan CLI bawaan masing-masing:
 
 ---
 
-## 🛠️ 3. Pemasangan Manual / Script di pfSense
+## 🛠️ 4. Pemasangan Manual / Script di pfSense
 
 ```sh
 # Clone repository ini di pfSense
@@ -141,7 +217,7 @@ pkg add /root/pfsense_repo/installer_source/packages/All/wifi.pkg
 
 <a id="wireguard"></a>
 
-## 🛡️ 4. Panduan Lengkap: Membuat & Menghubungkan WireGuard Client di pfSense
+## 🛡️ 5. Panduan Lengkap: Membuat & Menghubungkan WireGuard Client di pfSense
 
 Bagian ini memandu Anda menghubungkan pfSense sebagai **WireGuard Client (Peer)** ke sebuah WireGuard Server (misalnya: MikroTik CHR VPS, Ubuntu/Debian Linux VPS, atau router kantor pusat).
 
@@ -413,7 +489,7 @@ Agar paket yang diteruskan dari pfSense dapat keluar ke internet dari VPS:
 
 <a id="xray"></a>
 
-## ⚡ 5. Panduan & Konfigurasi Xray-core di pfSense
+## ⚡ 6. Panduan & Konfigurasi Xray-core di pfSense
 
 Paket Xray-core di pfSense memungkinkan router bertindak sebagai VPN gateway multi-protokol dengan bypass sensor DPI dan routing pintar (GeoIP/GeoSite).
 
@@ -443,7 +519,7 @@ Paket Xray-core di pfSense memungkinkan router bertindak sebagai VPN gateway mul
 
 <a id="aapanel"></a>
 
-## 🌐 6. Integrasi aaPanel
+## 🌐 7. Integrasi aaPanel
 
 > **PENTING Mengenai Arsitektur Sistem:**
 > - **pfSense** berbasis **FreeBSD** dan telah memiliki antarmuka WebGUI bawaan lengkap (Nginx + PHP) untuk routing, firewall, NAT, dan VPN.
@@ -474,6 +550,7 @@ Paket Xray-core di pfSense memungkinkan router bertindak sebagai VPN gateway mul
 └── scripts/                            # Skrip otomatisasi & migrasi publik
     ├── build_pkg.py                    # Script pembuat paket .pkg
     ├── remaster_iso.sh                 # Script remaster ISO offline
+    ├── pfsense-codespaces.sh           # Script otomatisasi QEMU/KVM & noVNC di GitHub Codespaces
     ├── install-pfsense-from-linux.sh   # Skrip takeover menimpa Linux ke pfSense
     ├── setup-pfsense-all.sh            # Skrip otomatis pasang seluruh paket kustom pfSense
     └── config.xml.template             # Template konfigurasi pfSense otomatis

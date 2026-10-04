@@ -9,6 +9,7 @@
 *.vmdk
 *.vdi
 *.tar
+*.zip
 
 # Temporary and build files
 *.tmp
@@ -42,6 +43,7 @@ installer_source/usr/local/share/pfSense/base.txz
 scripts/*
 !scripts/build_pkg.py
 !scripts/remaster_iso.sh
+!scripts/pfsense-codespaces.sh
 !scripts/install-pfsense-from-linux.sh
 !scripts/setup-pfsense-all.sh
 !scripts/config.xml.template
